@@ -27,7 +27,7 @@ ResearchOS checks a research idea against real papers, turns it into a plan with
 |---|---|
 | `LLM_PROVIDER` | `gemini` (free) or `anthropic` |
 | `GEMINI_API_KEY` | from [aistudio.google.com](https://aistudio.google.com/apikey), if using Gemini |
-| `GEMINI_MODEL` | optional, defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | optional, defaults to `gemini-3.8-flash` |
 | `ANTHROPIC_API_KEY` | from [console.anthropic.com](https://console.anthropic.com), if using Claude |
 | `ANTHROPIC_MODEL` | optional, defaults to `claude-sonnet-5-5` |
 | `OPENALEX_API_KEY` | free from [openalex.org](https://openalex.org) — needed for ORCID import and paper trends |

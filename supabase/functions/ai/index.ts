@@ -38,7 +38,7 @@ async function llmText(prompt: string, search = false): Promise<string> {
   if (provider === "gemini") {
     const key = env("GEMINI_API_KEY");
     if (!key) throw new HttpError(500, "GEMINI_API_KEY is not set in Supabase secrets.");
-    const model = env("GEMINI_MODEL", "gemini-2.5-flash");
+    const model = env("GEMINI_MODEL", "gemini-3.8-flash");
     const body: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
     if (search) body.tools = [{ google_search: {} }];
     else body.generationConfig = { responseMimeType: "application/json" };
