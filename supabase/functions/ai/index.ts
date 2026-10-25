@@ -33,20 +33,43 @@ function parseJSON(text: string): any {
   throw new Error("no JSON");
 }
 
+// Busy or rate-limited: worth waiting and retrying (with backoff) before giving up.
+const BUSY = new Set([429, 500, 502, 503, 504, 529]);
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+async function fetchRetry(call: () => Promise<Response>, tries = 3): Promise<Response> {
+  let r = await call();
+  for (let i = 1; i < tries && BUSY.has(r.status); i++) {
+    await r.body?.cancel();
+    const wait = Number(r.headers.get("retry-after")) * 1000 || 1500 * 2 ** (i - 1);
+    await sleep(Math.min(wait, 8000) + Math.random() * 400);
+    r = await call();
+  }
+  return r;
+}
+function busyOr(r: Response, who: string, text: string) {
+  if (BUSY.has(r.status)) return new HttpError(503, `${who} is busy right now (error ${r.status}). Wait a minute and try again.`);
+  return new HttpError(502, `${who} error ${r.status}: ${text.slice(0, 300)}`);
+}
+
 async function llmText(prompt: string, search = false): Promise<string> {
   const provider = env("LLM_PROVIDER", env("GEMINI_API_KEY") ? "gemini" : "anthropic");
   if (provider === "gemini") {
     const key = env("GEMINI_API_KEY");
     if (!key) throw new HttpError(500, "GEMINI_API_KEY is not set in Supabase secrets.");
-    const model = env("GEMINI_MODEL", "gemini-3.8-flash");
     const body: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
     if (search) body.tools = [{ google_search: {} }];
     else body.generationConfig = { responseMimeType: "application/json" };
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new HttpError(502, `Gemini error ${r.status}: ${(await r.text()).slice(0, 300)}`);
-    const d = await r.json();
+    // Try the main model (with retries), then the optional fallback model.
+    const models = [env("GEMINI_MODEL", "gemini-3.8-flash"), env("GEMINI_FALLBACK_MODEL")].filter(Boolean);
+    let r: Response | null = null;
+    for (const model of models) {
+      r = await fetchRetry(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }));
+      if (r.ok || !BUSY.has(r.status)) break;
+    }
+    if (!r!.ok) throw busyOr(r!, "Gemini", await r!.text());
+    const d = await r!.json();
     return (d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
   }
   const key = env("ANTHROPIC_API_KEY");
@@ -57,12 +80,12 @@ async function llmText(prompt: string, search = false): Promise<string> {
     messages: [{ role: "user", content: prompt }],
   };
   if (search) body.tools = [{ type: env("ANTHROPIC_WEB_SEARCH_TOOL", "web_search_20250305"), name: "web_search", max_uses: 6 }];
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const r = await fetchRetry(() => fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new HttpError(502, `Claude API error ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  }));
+  if (!r.ok) throw busyOr(r, "Claude API", await r.text());
   const d = await r.json();
   return (d.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
 }
