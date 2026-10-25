@@ -36,13 +36,25 @@ function parseJSON(text: string): any {
 // Busy or rate-limited: worth waiting and retrying (with backoff) before giving up.
 const BUSY = new Set([429, 500, 502, 503, 504, 529]);
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
-async function fetchRetry(call: () => Promise<Response>, tries = 3): Promise<Response> {
-  let r = await call();
+// Supabase stops a function after about 150 s, so every AI call shares a time budget per request.
+let deadline = 0;
+const remaining = () => (deadline ? deadline - Date.now() : 120000);
+async function fetchRetry(call: (signal: AbortSignal) => Promise<Response>, tries = 3): Promise<Response> {
+  const once = async () => {
+    const ms = Math.max(5000, Math.min(90000, remaining() - 3000));
+    try { return await call(AbortSignal.timeout(ms)); }
+    catch (e) {
+      if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) throw new HttpError(504, "The AI took too long to answer. Try again in a minute.");
+      throw e;
+    }
+  };
+  let r = await once();
   for (let i = 1; i < tries && BUSY.has(r.status); i++) {
     await r.body?.cancel();
-    const wait = Number(r.headers.get("retry-after")) * 1000 || 1500 * 2 ** (i - 1);
-    await sleep(Math.min(wait, 8000) + Math.random() * 400);
-    r = await call();
+    const wait = Math.min(Number(r.headers.get("retry-after")) * 1000 || 1500 * 2 ** (i - 1), 8000) + Math.random() * 400;
+    if (remaining() - wait < 25000) break; // not enough time left for another try
+    await sleep(wait);
+    r = await once();
   }
   return r;
 }
@@ -59,14 +71,16 @@ async function llmText(prompt: string, search = false): Promise<string> {
     const body: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
     if (search) body.tools = [{ google_search: {} }];
     else body.generationConfig = { responseMimeType: "application/json" };
+    // Optional: GEMINI_THINKING_LEVEL = low makes answers faster (Gemini 3 models).
+    if (env("GEMINI_THINKING_LEVEL")) body.generationConfig = { ...(body.generationConfig as object ?? {}), thinkingConfig: { thinkingLevel: env("GEMINI_THINKING_LEVEL") } };
     // Try the main model (with retries), then the optional fallback model.
     const models = [env("GEMINI_MODEL", "gemini-3.8-flash"), env("GEMINI_FALLBACK_MODEL")].filter(Boolean);
     let r: Response | null = null;
     for (const model of models) {
-      r = await fetchRetry(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      r = await fetchRetry((signal) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
       }));
-      if (r.ok || !BUSY.has(r.status)) break;
+      if (r.ok || !BUSY.has(r.status) || remaining() < 30000) break;
     }
     if (!r!.ok) throw busyOr(r!, "Gemini", await r!.text());
     const d = await r!.json();
@@ -80,10 +94,10 @@ async function llmText(prompt: string, search = false): Promise<string> {
     messages: [{ role: "user", content: prompt }],
   };
   if (search) body.tools = [{ type: env("ANTHROPIC_WEB_SEARCH_TOOL", "web_search_20250305"), name: "web_search", max_uses: 6 }];
-  const r = await fetchRetry(() => fetch("https://api.anthropic.com/v1/messages", {
+  const r = await fetchRetry((signal) => fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body), signal,
   }));
   if (!r.ok) throw busyOr(r, "Claude API", await r.text());
   const d = await r.json();
@@ -94,6 +108,7 @@ async function llmJSON(prompt: string, search = false): Promise<any> {
   const full = prompt + "\n\nReply with only the JSON value, no other text.";
   let text = await llmText(full, search);
   try { return parseJSON(text); } catch {
+    if (remaining() < 30000) throw new HttpError(502, "The AI reply wasn't in the expected format. Try again.");
     text = await llmText(full + "\nYour previous reply was not valid JSON. Return only valid JSON this time.", search);
     try { return parseJSON(text); } catch { throw new HttpError(502, "The AI reply wasn't in the expected format. Try again."); }
   }
@@ -423,6 +438,7 @@ const ACTIONS: Record<string, (sb: SupabaseClient, uid: string, b: any) => Promi
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  deadline = Date.now() + 135000;
   try {
     const auth = req.headers.get("Authorization") ?? "";
     const sb = createClient(env("SUPABASE_URL"), env("SUPABASE_ANON_KEY"), { global: { headers: { Authorization: auth } } });
