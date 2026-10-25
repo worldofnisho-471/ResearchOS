@@ -208,6 +208,9 @@ function need(role: string | undefined, allowed: string[], what: string) {
 async function log(sb: SupabaseClient, projectId: string, userId: string, text: string) {
   await sb.from("activity_log").insert({ project_id: projectId, actor_id: userId, text });
 }
+async function progress(b: any, text: string) {
+  if (b._job) await b._sb.from("ai_jobs").update({ progress: text, updated_at: new Date().toISOString() }).eq("id", b._job);
+}
 const ASSUMPTION_SHAPE = '{"id":"a1","category":"Customer|Problem|Price|Market size|Competition|Channel|Regulation","claim":"1 sentence","basis":"how it was estimated","confidence":"Low|Medium|High","check":"what evidence would confirm or reject it","search":"a precise search query","where":"patents|scholar|web"}';
 
 // ---------- Actions ----------
@@ -215,8 +218,10 @@ async function assess(sb: SupabaseClient, uid: string, b: any) {
   need(await roleOf(sb, b.projectId, uid), ["Lead"], "run the idea check");
   const idea = { title: String(b.idea?.title ?? "").trim(), text: String(b.idea?.text ?? "").trim(), field: String(b.idea?.field ?? ""), goal: String(b.idea?.goal ?? "Academic paper") };
   if (!idea.title || !idea.text) throw new HttpError(400, "Add a title and a short description of the idea.");
+  await progress(b, "Searching Semantic Scholar for related papers…");
   const papers = await semanticScholar(`${idea.title} ${idea.text.split(/\s+/).slice(0, 25).join(" ")}`);
   const list = papers.map((p: any, i: number) => `[${i}] ${p.title} (${p.year ?? "n.d."}): ${p.abstract || "no abstract"}`).join("\n");
+  await progress(b, `Assessing the idea against ${papers.length} papers…`);
   const out = await llmJSON(
 `You are a research advisor assessing a new research idea.
 Idea title: ${idea.title}
@@ -253,25 +258,48 @@ async function plan(sb: SupabaseClient, uid: string, b: any) {
   need(await roleOf(sb, b.projectId, uid), ["Lead"], "generate the plan");
   const { data: p } = await sb.from("projects").select("*").eq("id", b.projectId).single();
   if (!p?.assessment) throw new HttpError(400, "Run the idea check first.");
-  const out = await llmJSON(
-`You are a research project planner. Turn this idea into a validation plan.
-Idea: ${p.title}. ${p.idea_text}
+  const context = `Idea: ${p.title}. ${p.idea_text}
 Goal: ${p.goal}
-Known challenges: ${(p.assessment.challenges ?? []).join("; ")}
-Return JSON: {"milestones":[{"title":"short","tasks":[{"title":"short action","method":"1 sentence","success_criterion":"measurable target with a number","est_days":number}]}]}
-Give 3-5 milestones with 2-4 tasks each, in order. Every success criterion must be measurable.`);
-  const ms = (out.milestones ?? []).filter((m: any) => m?.title);
+Known challenges: ${(p.assessment.challenges ?? []).join("; ")}`;
+
+  // Step 1: a short call for the milestones only.
+  await progress(b, "Choosing milestones…");
+  const m = await llmJSON(
+`You are a research project planner. Outline a validation plan for this idea.
+${context}
+Return JSON: {"milestones":[{"title":"short","purpose":"1 sentence: what this milestone proves"}]}
+Give 3-4 milestones in order, from the first experiment to the final validation.`);
+  const ms = (m.milestones ?? []).filter((x: any) => x?.title).slice(0, 5);
   if (!ms.length) throw new HttpError(502, "The AI returned an empty plan. Try again.");
-  await sb.from("tasks").delete().eq("project_id", b.projectId);
-  await sb.from("reviews").delete().eq("project_id", b.projectId);
+
+  // Step 2: one short call per milestone, all at once; a slow or failed one is retried on its own.
+  await progress(b, `Writing tasks for ${ms.length} milestones…`);
+  const outline = ms.map((x: any, i: number) => `${i + 1}. ${x.title}: ${x.purpose ?? ""}`).join("\n");
+  const tasksFor = (x: any, i: number) => llmJSON(
+`You are a research project planner.
+${context}
+The plan's milestones:
+${outline}
+Write the tasks for milestone ${i + 1} only ("${x.title}").
+Return JSON: {"tasks":[{"title":"short action","method":"1 sentence","success_criterion":"measurable target with a number","est_days":number}]}
+Give 2-3 tasks in order. Every success criterion must be measurable.`);
+  const lists = await Promise.all(ms.map(async (x: any, i: number) => {
+    try { return await tasksFor(x, i); }
+    catch (e) { if (remaining() > 45000) return await tasksFor(x, i); throw e; }
+  }));
+
+  await progress(b, "Saving the plan…");
   let pos = 1;
-  const rows = ms.flatMap((m: any) => (m.tasks ?? []).map((t: any) => ({
-    project_id: b.projectId, milestone: String(m.title), title: String(t.title ?? "Task"), method: String(t.method ?? ""),
+  const rows = ms.flatMap((x: any, i: number) => (lists[i]?.tasks ?? []).filter((t: any) => t?.title).map((t: any) => ({
+    project_id: b.projectId, milestone: String(x.title), title: String(t.title), method: String(t.method ?? ""),
     success_criterion: String(t.success_criterion ?? ""), est_days: Math.max(1, Math.round(Number(t.est_days) || 1)), status: "To do", position: pos++, updated_by: uid,
   })));
+  if (!rows.length) throw new HttpError(502, "The AI returned an empty plan. Try again.");
+  await sb.from("tasks").delete().eq("project_id", b.projectId);
+  await sb.from("reviews").delete().eq("project_id", b.projectId);
   const { error } = await sb.from("tasks").insert(rows);
   if (error) throw new HttpError(500, error.message);
-  await sb.from("projects").update({ milestones: ms.map((m: any) => String(m.title)) }).eq("id", b.projectId);
+  await sb.from("projects").update({ milestones: ms.map((x: any) => String(x.title)) }).eq("id", b.projectId);
   await log(sb, b.projectId, uid, `generated a plan with ${rows.length} tasks`);
   return { tasks: rows.length };
 }
@@ -348,6 +376,7 @@ async function importWorks(sb: SupabaseClient, uid: string, b: any) {
 
 async function directions(sb: SupabaseClient, uid: string, b: any) {
   need(await roleOf(sb, b.projectId, uid), ["Lead", "Researcher"], "suggest related directions");
+  await progress(b, "Importing the team's ORCID publications…");
   await importWorks(sb, uid, b).catch(() => null);
   const [{ data: p }, { data: pubs }] = await Promise.all([
     sb.from("projects").select("*").eq("id", b.projectId).single(),
@@ -356,6 +385,7 @@ async function directions(sb: SupabaseClient, uid: string, b: any) {
   if (!p?.assessment) throw new HttpError(400, "Run the idea check first.");
   const pubList = (pubs ?? []).map((x: any) => `- ${x.title}${x.year ? ` (${x.year})` : ""}${(x.topics ?? []).length ? ` [${x.topics.join(", ")}]` : ""}${x.abstract ? ": " + String(x.abstract).slice(0, 250) : ""}`).join("\n");
   // Step 1: candidates
+  await progress(b, "Finding candidate directions…");
   const c = await llmJSON(
 `You are a research strategy advisor. A team's idea scored ${p.viability_score}/100 (${p.verdict}).
 Idea: ${p.title}. ${p.idea_text}
@@ -367,6 +397,7 @@ Return JSON: {"expertise_summary":"2 sentences on what the publications show the
   const cands = (c.candidates ?? []).filter((x: any) => x?.title && x?.phrase).slice(0, 6);
   if (!cands.length) throw new HttpError(502, "The AI returned no candidate directions. Try again.");
   // Step 2: signals
+  await progress(b, "Checking paper trends, NIH funding and market signals…");
   const [trends, funding, market] = await Promise.all([
     Promise.all(cands.map((x: any) => openalexTrend(x.phrase))),
     Promise.all(cands.map((x: any) => nihFunding(x.phrase))),
@@ -381,6 +412,7 @@ Return JSON: {"market":[{"index":0,"signals":[{"claim":"1 sentence","number":"th
     papers_per_year: trends[i], nih_funding: funding[i], market: marketBy.get(i) ?? [],
   }));
   // Step 3: tally
+  await progress(b, "Ranking the directions…");
   const out = await llmJSON(
 `Rank these candidate research directions for a team whose idea scored low. Use ONLY the evidence given; never invent numbers.
 Team's publications:
@@ -436,9 +468,12 @@ const ACTIONS: Record<string, (sb: SupabaseClient, uid: string, b: any) => Promi
   assess, plan, review, directions, "import-works": importWorks, rescore,
 };
 
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
+
+// Every AI action runs as a background job: the reply is the job id straight away, the work
+// carries on after it, and the app watches the ai_jobs row for progress and the result.
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  deadline = Date.now() + 135000;
   try {
     const auth = req.headers.get("Authorization") ?? "";
     const sb = createClient(env("SUPABASE_URL"), env("SUPABASE_ANON_KEY"), { global: { headers: { Authorization: auth } } });
@@ -448,7 +483,26 @@ Deno.serve(async (req) => {
     const fn = ACTIONS[String(b.action)];
     if (!fn) throw new HttpError(400, "Unknown action.");
     if (!b.projectId) throw new HttpError(400, "Missing project.");
-    return json(await fn(sb, user.id, b));
+    const { data: job, error } = await sb.from("ai_jobs").insert({ project_id: b.projectId, action: String(b.action), created_by: user.id }).select("id").single();
+    if (error || !job) throw new HttpError(error && /does not exist|relation|schema cache/i.test(error.message) ? 500 : 403,
+      error && /does not exist|relation|schema cache/i.test(error.message) ? "The ai_jobs table is missing. Re-run schema.sql in Supabase." : "You're not a member of this project.");
+    b._job = job.id; b._sb = sb;
+    deadline = Date.now() + 140000;
+    const work = (async () => {
+      try {
+        const result = await fn(sb, user.id, b);
+        await sb.from("ai_jobs").update({ status: "done", result: result ?? {}, progress: "", updated_at: new Date().toISOString() }).eq("id", job.id);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Something went wrong.";
+        await sb.from("ai_jobs").update({ status: "error", error: msg, updated_at: new Date().toISOString() }).eq("id", job.id);
+      }
+    })();
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+      EdgeRuntime.waitUntil(work);
+      return json({ jobId: job.id }, 202);
+    }
+    await work;
+    return json({ jobId: job.id });
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500;
     return json({ error: e instanceof Error ? e.message : "Something went wrong." }, status);

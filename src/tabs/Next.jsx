@@ -11,7 +11,7 @@ export default function Next() {
   const { d, pid, me, canEdit, isLead, review: rv, reload, name, act, toast } = P;
   const { isBusy, run, Status } = useBusy();
 
-  const go2 = async () => { if (await run("review", () => ai("review", pid))) await reload("reviews", "activity"); };
+  const go2 = async () => { if (await run("review", (pr) => ai("review", pid, {}, pr))) await reload("reviews", "activity"); };
   const head = (
     <div className="panel-head">
       <div>

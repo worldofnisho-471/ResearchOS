@@ -33,7 +33,7 @@ export default function Directions() {
   const { isBusy, run, Status } = useBusy();
 
   const suggest = async () => {
-    const out = await run("dirs", () => ai("directions", pid));
+    const out = await run("dirs", (pr) => ai("directions", pid, {}, pr));
     if (out) await reload("directions", "publications", "activity");
   };
 

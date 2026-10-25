@@ -6,8 +6,41 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const configured = Boolean(url && key);
 export const supabase = configured ? createClient(url, key) : null;
 
-/** Calls the single "ai" edge function. It runs as the signed-in user, so row-level security applies. */
-export async function ai(action, projectId, extra = {}) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const STALE_MS = 175000; // Supabase stops a function after ~150 s; a job still "running" after this was cut off
+
+/** Waits for a background AI job to finish, reporting its progress. Resolves to its result. */
+export async function waitForJob(jobId, onProgress) {
+  for (let i = 0; ; i++) {
+    const { data, error } = await supabase.from("ai_jobs").select("status, progress, result, error, created_at").eq("id", jobId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error("The AI job disappeared. Try again.");
+    if (data.status === "done") return data.result;
+    if (data.status === "error") throw new Error(data.error || "The AI step failed. Try again.");
+    if (Date.now() - Date.parse(data.created_at) > STALE_MS) throw new Error("The AI took too long and was stopped. Try again in a minute.");
+    if (data.progress && onProgress) onProgress(data.progress);
+    await sleep(i < 5 ? 1500 : 2500);
+  }
+}
+
+const RETRYABLE = /too long|busy|stopped|timed out|try again in a minute/i;
+
+/** Runs an AI action as a background job and waits for it. Retries once if the AI was busy or slow. */
+export async function ai(action, projectId, extra = {}, onProgress) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const { jobId } = await startAi(action, projectId, extra);
+      onProgress?.(attempt ? "The AI was slow, so trying again…" : "Starting…");
+      return await waitForJob(jobId, onProgress);
+    } catch (e) {
+      if (attempt === 0 && RETRYABLE.test(e.message || "")) { onProgress?.("The AI was slow, so trying again…"); await sleep(3000); continue; }
+      throw e;
+    }
+  }
+}
+
+/** Calls the single "ai" edge function, which starts the job and replies with its id. Runs as the signed-in user, so row-level security applies. */
+async function startAi(action, projectId, extra = {}) {
   const { data, error } = await supabase.functions.invoke("ai", { body: { action, projectId, ...extra } });
   if (error) {
     let msg = error.message || "The AI service didn't respond.";
@@ -27,5 +60,6 @@ export async function ai(action, projectId, extra = {}) {
     throw new Error(msg);
   }
   if (data && data.error) throw new Error(data.error);
+  if (!data || !data.jobId) throw new Error("The AI function is out of date. Paste the latest index.ts into Supabase and deploy it again.");
   return data;
 }

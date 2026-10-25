@@ -43,7 +43,7 @@ export function useBusy() {
     const j = getJob(id(k));
     return (
       <p className={"status" + (j && j.error ? " err" : "")} role="status">
-        {j && j.busy ? text + " You can switch tabs; it keeps running." : j && j.error ? j.error : ""}
+        {j && j.busy ? (j.progress && j.progress !== "Starting…" ? j.progress : text) + " You can switch tabs or reload; it keeps running." : j && j.error ? j.error : ""}
       </p>
     );
   };

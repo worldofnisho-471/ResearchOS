@@ -15,9 +15,14 @@ export function setJobError(id, msg) { if (msg) jobs.set(id, { error: msg }); el
 /** Starts fn unless the same job is already running. Resolves to fn's result, or null on error. */
 export async function runJob(id, fn) {
   if (jobs.get(id)?.busy) return null;
-  jobs.set(id, { busy: true, at: Date.now() }); emit();
+  const token = {};
+  jobs.set(id, { busy: true, at: Date.now(), progress: "", token }); emit();
+  const onProgress = (text) => {
+    const cur = jobs.get(id);
+    if (cur && cur.token === token && text && text !== cur.progress) { jobs.set(id, { ...cur, progress: text }); emit(); }
+  };
   try {
-    const out = await fn();
+    const out = await fn(onProgress);
     jobs.delete(id); emit();
     return out;
   } catch (e) {

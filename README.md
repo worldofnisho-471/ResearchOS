@@ -96,8 +96,13 @@ supabase/
   functions/ai/      the one edge function for every AI and outside-data call
 ```
 
+## How AI steps run
+
+Every AI step (idea check, plan, review, related directions, ORCID import, re-score) runs as a **background job**. The `ai` function records the job in the `ai_jobs` table, replies straight away, and keeps working; the app watches the job, shows its progress, and refreshes the screen when it's done. Jobs survive tab switches and page reloads, teammates see them running, and a job that times out because the AI was busy is retried once automatically. Plans are written in small parallel calls (milestones first, then each milestone's tasks) so no single AI call runs long.
+
 ## Troubleshooting
 
+- **"The AI function is out of date"** or **"The ai_jobs table is missing"**: paste the latest `index.ts` into the `ai` function and re-run `schema.sql`.
 - **"Couldn't reach the AI function"**: the function must be named `ai` and deployed; check its logs in Supabase.
 - **"GEMINI_API_KEY is not set"** or similar: add the secret, then redeploy the function.
 - **ORCID import finds nothing**: check `OPENALEX_API_KEY` is set and the ORCID record has public works.

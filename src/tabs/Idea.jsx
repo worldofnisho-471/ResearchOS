@@ -32,12 +32,12 @@ export default function Idea() {
     const idea = { ...f };
     setDraft(draftId, idea);
     // Everything after the call runs even if you've moved to another tab.
-    const out = await run("idea", () => ai("assess", pid, { idea }));
+    const out = await run("idea", (pr) => ai("assess", pid, { idea }, pr));
     if (!out) return;
     setDraft(draftId, undefined);
     await reload("project", "papers", "tasks", "results", "reviews", "directions", "evidence", "activity");
     if (out.suggestDirections) {
-      if (await run("dirs", () => ai("directions", pid))) await reload("directions", "publications", "activity");
+      if (await run("dirs", (pr) => ai("directions", pid, {}, pr))) await reload("directions", "publications", "activity");
     }
   };
 

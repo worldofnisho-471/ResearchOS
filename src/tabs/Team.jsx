@@ -72,7 +72,7 @@ function Publications() {
   const myOrcid = profiles[me]?.orcid;
 
   const importOrcid = async () => {
-    const out = await runAi("orcid", () => ai("import-works", pid));
+    const out = await runAi("orcid", (pr) => ai("import-works", pid, {}, pr));
     if (!out) return;
     await reload("publications", "activity");
     setResult(out.members_with_orcid ? `Imported ${out.added} new publication${out.added === 1 ? "" : "s"} from ${out.members_with_orcid} ORCID record${out.members_with_orcid === 1 ? "" : "s"}.` : "Nobody on the team has added an ORCID iD yet.");

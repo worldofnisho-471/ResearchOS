@@ -172,6 +172,21 @@ create table if not exists public.econ (
   updated_at timestamptz not null default now()
 );
 
+-- AI work runs as background jobs; the app watches this table for the result
+create table if not exists public.ai_jobs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  action text not null,
+  status text not null default 'running' check (status in ('running', 'done', 'error')),
+  progress text not null default '',
+  result jsonb,
+  error text,
+  created_by uuid not null references auth.users (id) on delete cascade default auth.uid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists ai_jobs_project_idx on public.ai_jobs (project_id, created_at desc);
+
 create table if not exists public.activity_log (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
@@ -223,7 +238,7 @@ returns trigger language plpgsql as $$
 begin new.updated_at := now(); return new; end $$;
 
 do $$ declare t text; begin
-  foreach t in array array['profiles', 'projects', 'tasks', 'notes'] loop
+  foreach t in array array['profiles', 'projects', 'tasks', 'notes', 'ai_jobs'] loop
     execute format('drop trigger if exists touch_%1$s on public.%1$s', t);
     execute format('create trigger touch_%1$s before update on public.%1$s for each row execute function public.touch_updated_at()', t);
   end loop;
@@ -323,6 +338,7 @@ alter table public.publications enable row level security;
 alter table public.directions enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.econ enable row level security;
+alter table public.ai_jobs enable row level security;
 
 drop policy if exists profiles_read on public.profiles;
 create policy profiles_read on public.profiles for select using (id = auth.uid() or public.shares_project(id));
@@ -380,6 +396,13 @@ create policy comments_insert on public.comments for insert with check (public.i
 drop policy if exists comments_delete on public.comments;
 create policy comments_delete on public.comments for delete using (author_id = auth.uid() or public.is_lead(project_id));
 
+drop policy if exists ai_jobs_read on public.ai_jobs;
+create policy ai_jobs_read on public.ai_jobs for select using (public.is_member(project_id));
+drop policy if exists ai_jobs_insert on public.ai_jobs;
+create policy ai_jobs_insert on public.ai_jobs for insert with check (public.is_member(project_id) and created_by = auth.uid());
+drop policy if exists ai_jobs_update on public.ai_jobs;
+create policy ai_jobs_update on public.ai_jobs for update using (created_by = auth.uid()) with check (created_by = auth.uid());
+
 drop policy if exists activity_read on public.activity_log;
 create policy activity_read on public.activity_log for select using (public.is_member(project_id));
 drop policy if exists activity_insert on public.activity_log;
@@ -404,7 +427,7 @@ end $$;
 -- ---------- Realtime ----------
 do $$ declare t text; begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log'] loop
+    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log', 'ai_jobs'] loop
       if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;

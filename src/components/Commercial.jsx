@@ -106,7 +106,7 @@ export default function Commercial() {
   const c = evidenceCounts(a, d.evidence);
   const { isBusy, run, Status } = useBusy();
   const rescore = async () => {
-    const out = await run("rescore", () => ai("rescore", pid));
+    const out = await run("rescore", (pr) => ai("rescore", pid, {}, pr));
     if (out) await reload("project", "activity");
   };
   return (

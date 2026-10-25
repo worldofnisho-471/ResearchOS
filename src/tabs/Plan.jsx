@@ -89,7 +89,7 @@ export default function Plan() {
   const generate = async () => {
     if (d.tasks.length && !armed) { setArmed(true); setErr({ key: "plan", msg: "This replaces every task and result for everyone. Click again to confirm." }); return; }
     setArmed(false);
-    if (await run("plan", () => ai("plan", pid))) await reload("tasks", "results", "reviews", "project", "activity");
+    if (await run("plan", (pr) => ai("plan", pid, {}, pr))) await reload("tasks", "results", "reviews", "project", "activity");
   };
 
   const head = (

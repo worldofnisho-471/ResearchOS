@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "./supabase.js";
+import { supabase, waitForJob } from "./supabase.js";
+import { getJob, runJob } from "./jobs.js";
 import { useToast } from "../components/Toast.jsx";
 
 const Ctx = createContext(null);
@@ -25,6 +26,13 @@ const LOADERS = {
 const TABLE_KEYS = {
   projects: "project", project_members: "members", tasks: "tasks", results: "results", notes: "notes", comments: "comments",
   reviews: "reviews", evidence: "evidence", publications: "publications", directions: "directions", activity_log: "activity", papers: "papers", econ: "econ",
+};
+// Which tab's status each AI action shows in, and what to refresh when it finishes.
+const JOB_KEY = { assess: "idea", plan: "plan", review: "review", directions: "dirs", "import-works": "orcid", rescore: "rescore" };
+const JOB_RELOAD = {
+  assess: ["project", "papers", "tasks", "results", "reviews", "directions", "evidence", "activity"],
+  plan: ["tasks", "results", "reviews", "project", "activity"], review: ["reviews", "activity"],
+  directions: ["directions", "publications", "activity"], "import-works": ["publications", "activity"], rescore: ["project", "activity"],
 };
 const EMPTY = { project: null, members: [], tasks: [], results: [], notes: [], comments: [], reviews: [], evidence: [], publications: [], directions: [], activity: [], papers: [], econ: null, invites: [] };
 
@@ -61,6 +69,19 @@ export function ProjectProvider({ pid, session, tab, children }) {
     return () => { live = false; };
   }, [pid, me, load]);
 
+  // Pick up AI jobs that are already running: after a page reload, or started by a teammate.
+  const track = useCallback((row) => {
+    const key = JOB_KEY[row.action];
+    if (!key || row.status !== "running" || Date.now() - Date.parse(row.created_at) > 175000) return;
+    const id = pid + ":" + key;
+    if (getJob(id)?.busy) return;
+    runJob(id, (pr) => waitForJob(row.id, pr)).then(() => Promise.all(JOB_RELOAD[row.action].map(load)));
+  }, [pid, load]);
+  useEffect(() => {
+    supabase.from("ai_jobs").select("id, action, status, created_at").eq("project_id", pid).eq("status", "running")
+      .then(({ data }) => (data || []).forEach(track));
+  }, [pid, track]);
+
   // Live updates + who is here
   useEffect(() => {
     const ch = supabase.channel("project:" + pid, { config: { presence: { key: me } } });
@@ -69,6 +90,7 @@ export function ProjectProvider({ pid, session, tab, children }) {
       ch.on("postgres_changes", { event: "*", schema: "public", table, filter }, () => soon(key));
       ch.on("postgres_changes", { event: "DELETE", schema: "public", table }, () => soon(key));
     }
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "ai_jobs", filter: `project_id=eq.${pid}` }, (e) => { if (e.new && e.new.created_by !== me) track(e.new); });
     ch.on("presence", { event: "sync" }, () => {
       const st = ch.presenceState();
       setOnline(Object.entries(st).map(([id, metas]) => ({ id, tab: metas[metas.length - 1]?.tab })));
@@ -76,7 +98,7 @@ export function ProjectProvider({ pid, session, tab, children }) {
     ch.subscribe((status) => { if (status === "SUBSCRIBED") ch.track({ tab: tab || "" }); });
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); channelRef.current = null; };
-  }, [pid, me, soon]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pid, me, soon, track]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { channelRef.current?.track?.({ tab: tab || "" }); }, [tab]);
 
