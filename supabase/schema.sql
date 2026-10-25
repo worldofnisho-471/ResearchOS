@@ -332,7 +332,8 @@ drop policy if exists profiles_insert on public.profiles;
 create policy profiles_insert on public.profiles for insert with check (id = auth.uid());
 
 drop policy if exists projects_read on public.projects;
-create policy projects_read on public.projects for select using (public.is_member(id));
+-- The creator check lets "insert ... returning" work: Postgres checks read access before the trigger adds the creator as Lead
+create policy projects_read on public.projects for select using (public.is_member(id) or created_by = auth.uid());
 drop policy if exists projects_insert on public.projects;
 create policy projects_insert on public.projects for insert to authenticated with check (created_by = auth.uid());
 drop policy if exists projects_update on public.projects;
