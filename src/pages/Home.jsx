@@ -38,7 +38,9 @@ export default function Home({ session }) {
     await supabase.from("activity_log").insert({ project_id: data.id, actor_id: session.user.id, text: "started the project" });
     go(`p/${data.id}/idea`);
   };
+  const myExample = (rows || []).find(({ p }) => p.is_example && p.created_by === session.user.id);
   const example = async () => {
+    if (myExample) { go(`p/${myExample.p.id}/dash`); return; }
     setBusy(true);
     const { data, error } = await supabase.rpc("create_example_project");
     setBusy(false);
@@ -57,7 +59,7 @@ export default function Home({ session }) {
             <p className="muted">Each project has its own idea check, plan, results, dashboard and notes. You see the projects you lead or were invited to.</p>
           </div>
           <div className="row">
-            <button className="btn" type="button" onClick={example} disabled={busy}>Open an example project</button>
+            <button className="btn" type="button" onClick={example} disabled={busy || rows === null}>Open the example project</button>
             <button className="btn primary" type="button" onClick={create} disabled={busy}>+ New project</button>
           </div>
         </div>

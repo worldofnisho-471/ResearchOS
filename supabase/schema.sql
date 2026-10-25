@@ -417,6 +417,13 @@ returns uuid language plpgsql security definer set search_path = public as $$
 declare pid uuid; t1 uuid; t2 uuid; t3 uuid; t4 uuid; t5 uuid; me uuid := auth.uid();
 begin
   if me is null then raise exception 'Sign in first'; end if;
+  -- One example per person: reopen it if they already have one (the lock stops double clicks racing)
+  perform pg_advisory_xact_lock(hashtext('example:' || me::text));
+  select p.id into pid from projects p
+  where p.is_example and p.created_by = me
+    and exists (select 1 from project_members m where m.project_id = p.id and m.user_id = me)
+  order by p.created_at limit 1;
+  if pid is not null then return pid; end if;
   insert into projects (title, idea_text, field, goal, verdict, viability_score, assessment, milestones, is_example, created_by)
   values (
     'Paper-strip nitrate test read by a phone camera (example)',
