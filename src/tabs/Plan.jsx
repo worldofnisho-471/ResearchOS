@@ -81,7 +81,7 @@ export default function Plan() {
   const [open, setOpen] = useState(null);
   const [q, setQ] = useState(""); const [owner, setOwner] = useState("any"); const [msF, setMsF] = useState("all"); const [upd, setUpd] = useState("any");
   const [armed, setArmed] = useState(false);
-  const { busy, run, Status, setErr } = useBusy();
+  const { isBusy, run, Status, setErr } = useBusy();
   const openBlocked = (t) => setOpen({ task: t, focus: "e-blocker" });
   const { handlers, overCol, dragId } = useDrag((t, s) => setStatus(P, t, s, openBlocked), canEdit);
   const ms = allMilestones(d.project, d.tasks);
@@ -101,7 +101,7 @@ export default function Plan() {
       {d.project.assessment ? (
         <div className="row">
           {canEdit ? <button className="btn" type="button" onClick={() => setOpen({ task: "new" })}>+ Add task</button> : null}
-          {isLead ? <button className="btn primary" type="button" disabled={busy === "plan"} onClick={generate}>{d.tasks.length ? "Regenerate plan" : "Generate plan"}</button> : null}
+          {isLead ? <button className="btn primary" type="button" disabled={isBusy("plan")} onClick={generate}>{d.tasks.length ? "Regenerate plan" : "Generate plan"}</button> : null}
         </div>
       ) : null}
     </div>

@@ -3,6 +3,7 @@ import { ProjectProvider, useP } from "../lib/project.jsx";
 import { go } from "../lib/router.js";
 import TopBar from "../components/TopBar.jsx";
 import { Avatar } from "../components/ui.jsx";
+import { busyKeys, useJobsVersion } from "../lib/jobs.js";
 import Idea from "../tabs/Idea.jsx";
 import Plan from "../tabs/Plan.jsx";
 import Results from "../tabs/Results.jsx";
@@ -15,6 +16,7 @@ const TABS = [
   ["idea", "1", "Idea check"], ["plan", "2", "Research plan"], ["results", "3", "Log results"],
   ["dash", "4", "Dashboard"], ["next", "5", "Next steps"], ["notes", "≡", "Notes"], ["team", "◎", "Team"],
 ];
+const JOB_TAB = { idea: "idea", dirs: "idea", rescore: "idea", plan: "plan", review: "next", orcid: "team" };
 const VIEWS = { idea: Idea, plan: Plan, results: Results, dash: Dashboard, next: Next, notes: Notes, team: Team };
 
 export default function Project({ pid, tab, session }) {
@@ -28,6 +30,8 @@ export default function Project({ pid, tab, session }) {
 function Shell({ session, tab }) {
   const P = useP();
   const { d, loaded, missing, online, role, name, pid } = P;
+  useJobsVersion();
+  const working = new Set(busyKeys(pid + ":").map((k) => JOB_TAB[k]));
 
   useEffect(() => {
     if (loaded && !VIEWS[tab]) go(`p/${pid}/${d.tasks.length ? "dash" : "idea"}`);
@@ -67,6 +71,7 @@ function Shell({ session, tab }) {
           <button key={k} className={"step" + (done[k] ? " done" : "") + (k === "notes" ? " notes-tab" : "")} role="tab" type="button"
             aria-selected={tab === k ? "true" : "false"} onClick={() => go(`p/${pid}/${k}`)}>
             <span className="n">{n}</span>{label}
+            {working.has(k) ? <span className="working" title="AI is working on this" aria-label="working" /> : null}
           </button>
         ))}
       </nav>

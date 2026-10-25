@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useP } from "../lib/project.jsx";
 import { ai, supabase } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
@@ -24,23 +24,19 @@ function Spark({ rows, label }) {
   );
 }
 
-export default function Directions({ auto, onAutoDone }) {
+export default function Directions() {
   const P = useP();
   const { d, pid, me, canEdit, reload, directions: dir, name, toast } = P;
   const p = d.project;
   const low = p.viability_score != null && (clamp(p.viability_score) < DIR_THRESHOLD || p.verdict === "Rethink");
   const [open, setOpen] = useState(false);
-  const { busy, run, Status } = useBusy();
-  const started = useRef(false);
+  const { isBusy, run, Status } = useBusy();
 
   const suggest = async () => {
     const out = await run("dirs", () => ai("directions", pid));
     if (out) await reload("directions", "publications", "activity");
   };
 
-  useEffect(() => {
-    if (auto && canEdit && !started.current) { started.current = true; onAutoDone(); suggest(); }
-  }, [auto, canEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startFrom = async (s) => {
     const { data, error } = await supabase.from("projects").insert({
@@ -79,7 +75,7 @@ export default function Directions({ auto, onAutoDone }) {
             Each is ranked on fit, research and funding momentum (OpenAlex, NIH RePORTER), commercial pull (web search with sources), room to contribute and feasibility.
           </p>
         </div>
-        {canEdit ? <div className="row"><button className={"btn small" + (dir ? "" : " primary")} type="button" disabled={busy === "dirs"} onClick={suggest}>{dir ? "Suggest again" : "Suggest related directions"}</button></div> : null}
+        {canEdit ? <div className="row"><button className={"btn small" + (dir ? "" : " primary")} type="button" disabled={isBusy("dirs")} onClick={suggest}>{dir ? "Suggest again" : "Suggest related directions"}</button></div> : null}
       </div>
       <Status k="dirs" text="Importing ORCID publications, checking paper and funding trends, and searching market signals… this can take a minute or two." />
       <p className="ms-sub">

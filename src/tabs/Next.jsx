@@ -9,7 +9,7 @@ const FIELDS = [["title", "Title"], ["method", "Method"], ["success_criterion", 
 export default function Next() {
   const P = useP();
   const { d, pid, me, canEdit, isLead, review: rv, reload, name, act, toast } = P;
-  const { busy, run, Status } = useBusy();
+  const { isBusy, run, Status } = useBusy();
 
   const go2 = async () => { if (await run("review", () => ai("review", pid))) await reload("reviews", "activity"); };
   const head = (
@@ -18,7 +18,7 @@ export default function Next() {
         <span className="label">Stage 5</span><h2>What should change next?</h2>
         <p className="muted">The AI reads the plan, every logged result, your observation and decision notes, and the protocols behind any missed or blocked task. Then it suggests tweaks, new tasks or a pivot. A Lead approves each change before it reaches the board.</p>
       </div>
-      {d.results.length && canEdit ? <div className="row"><button className="btn primary" type="button" disabled={busy === "review"} onClick={go2}>{rv ? "Review again" : "Review progress"}</button></div> : null}
+      {d.results.length && canEdit ? <div className="row"><button className="btn primary" type="button" disabled={isBusy("review")} onClick={go2}>{rv ? "Review again" : "Review progress"}</button></div> : null}
     </div>
   );
   if (!d.results.length) return <>{head}<div className="empty"><p>Log at least one result first. Reviews are based on what actually happened.</p><button className="btn" type="button" onClick={() => go(`p/${pid}/results`)}>Go to results</button></div></>;

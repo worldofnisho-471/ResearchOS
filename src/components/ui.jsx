@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useP } from "../lib/project.jsx";
+import { getJob, runJob, setJobError, useJobsVersion } from "../lib/jobs.js";
 
 const COLORS = ["#2c46d4", "#1d7f54", "#9a6512", "#b8382f", "#6b3fc9", "#0f7a8a", "#a33f7a", "#4a5168"];
 const colorFor = (id) => COLORS[[...String(id || "")].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
@@ -29,22 +31,23 @@ export function ConfirmButton({ className = "btn small danger", confirm, onConfi
   );
 }
 
-/** Runs an async AI call and shows progress or the error next to its button. */
+/** Runs an AI call as a job that survives tab switches; shows progress or the error next to its button. */
 export function useBusy() {
-  const [busy, setBusy] = useState(null);
-  const [err, setErr] = useState(null);
-  const run = async (key, fn) => {
-    setBusy(key); setErr(null);
-    try { return await fn(); }
-    catch (e) { setErr({ key, msg: e.message || "Something went wrong. Try again." }); return null; }
-    finally { setBusy(null); }
+  const { pid } = useP();
+  useJobsVersion();
+  const id = (k) => pid + ":" + k;
+  const isBusy = (k) => !!getJob(id(k))?.busy;
+  const run = (k, fn) => runJob(id(k), fn);
+  const setErr = (e) => setJobError(id(e.key), e.msg);
+  const Status = ({ k, text = "Working… this can take up to a minute." }) => {
+    const j = getJob(id(k));
+    return (
+      <p className={"status" + (j && j.error ? " err" : "")} role="status">
+        {j && j.busy ? text + " You can switch tabs; it keeps running." : j && j.error ? j.error : ""}
+      </p>
+    );
   };
-  const Status = ({ k, text = "Working… this can take up to a minute." }) => (
-    <p className={"status" + (err && err.key === k ? " err" : "")} role="status">
-      {busy === k ? text : err && err.key === k ? err.msg : ""}
-    </p>
-  );
-  return { busy, run, Status, setErr };
+  return { isBusy, run, Status, setErr };
 }
 
 export function hl(text, q) {

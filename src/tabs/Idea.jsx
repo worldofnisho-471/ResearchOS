@@ -4,6 +4,7 @@ import { ai } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
 import { clamp, evidenceCounts, GOALS, pillClass } from "../lib/util.js";
 import { useBusy } from "../components/ui.jsx";
+import { getDraft, setDraft } from "../lib/jobs.js";
 import Directions from "../components/Directions.jsx";
 import Commercial from "../components/Commercial.jsx";
 
@@ -12,26 +13,32 @@ export default function Idea() {
   const { d, pid, isLead, reload } = P;
   const p = d.project;
   const a = p.assessment;
-  const [f, setF] = useState({ title: p.title, text: p.idea_text, field: p.field, goal: p.goal });
+  const draftId = pid + ":idea-form";
+  const fromProject = () => ({ title: p.title, text: p.idea_text, field: p.field, goal: p.goal });
+  // Unsaved edits are kept outside this tab, so they survive switching tabs.
+  const [f, setF] = useState(() => getDraft(draftId) || fromProject());
   const [armed, setArmed] = useState(false);
-  const [autoDirs, setAutoDirs] = useState(false);
-  const { busy, run, Status, setErr } = useBusy();
+  const { isBusy, run, Status, setErr } = useBusy();
 
-  // Keep the form in step with edits other people make, unless you're typing.
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (!dirty) setF({ title: p.title, text: p.idea_text, field: p.field, goal: p.goal }); }, [p.title, p.idea_text, p.field, p.goal, dirty]);
-  const set = (k) => (e) => { setDirty(true); setF((x) => ({ ...x, [k]: e.target.value })); };
+  // Keep the form in step with edits other people make, unless you have unsaved changes.
+  useEffect(() => { if (!getDraft(draftId)) setF(fromProject()); }, [p.title, p.idea_text, p.field, p.goal]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (k) => (e) => setF((x) => { const n = { ...x, [k]: e.target.value }; setDraft(draftId, n); return n; });
 
   const submit = async (e) => {
     e.preventDefault();
     if (!f.title.trim() || !f.text.trim()) { setErr({ key: "idea", msg: "Add a title and a short description of the idea." }); return; }
     if (d.tasks.length && !armed) { setArmed(true); setErr({ key: "idea", msg: "This replaces the plan, results and review for everyone on the project. Click again to confirm." }); return; }
     setArmed(false);
-    const out = await run("idea", () => ai("assess", pid, { idea: f }));
+    const idea = { ...f };
+    setDraft(draftId, idea);
+    // Everything after the call runs even if you've moved to another tab.
+    const out = await run("idea", () => ai("assess", pid, { idea }));
     if (!out) return;
-    setDirty(false);
+    setDraft(draftId, undefined);
     await reload("project", "papers", "tasks", "results", "reviews", "directions", "evidence", "activity");
-    if (out.suggestDirections) setAutoDirs(true);
+    if (out.suggestDirections) {
+      if (await run("dirs", () => ai("directions", pid))) await reload("directions", "publications", "activity");
+    }
   };
 
   const sub = (label, o) => (
@@ -54,7 +61,7 @@ export default function Idea() {
       </div></div>
 
       <form className="grid" onSubmit={submit}>
-        <fieldset disabled={!isLead || busy === "idea"} style={{ display: "contents" }}>
+        <fieldset disabled={!isLead || isBusy("idea")} style={{ display: "contents" }}>
           <div className="field wide"><label className="label" htmlFor="f-title">Idea title</label>
             <input id="f-title" value={f.title} onChange={set("title")} placeholder="e.g. Paper-strip nitrate test read by a phone camera" /></div>
           <div className="field wide"><label className="label" htmlFor="f-text">Describe the idea in 2–5 sentences</label>
@@ -65,7 +72,7 @@ export default function Idea() {
             <select id="f-goal" value={f.goal} onChange={set("goal")}>{GOALS.map((g) => <option key={g}>{g}</option>)}</select></div>
         </fieldset>
         <div className="row field wide">
-          {isLead ? <button className="btn primary" type="submit" disabled={busy === "idea"}>{a ? "Re-run idea check" : "Check this idea"}</button> : null}
+          {isLead ? <button className="btn primary" type="submit" disabled={isBusy("idea")}>{a ? "Re-run idea check" : "Check this idea"}</button> : null}
           <Status k="idea" text="Searching papers and assessing the idea… this can take up to a minute." />
         </div>
       </form>
@@ -104,7 +111,7 @@ export default function Idea() {
               </div>
             </section>
           </div>
-          <Directions auto={autoDirs} onAutoDone={() => setAutoDirs(false)} />
+          <Directions />
           <Commercial />
           <div className="row">
             <button className="btn primary" type="button" onClick={() => go(`p/${pid}/plan`)}>{d.tasks.length ? "Go to research plan" : "Build the research plan"}</button>

@@ -104,7 +104,7 @@ export default function Commercial() {
   const a = d.project.assessment;
   const list = assumptionsOf(a);
   const c = evidenceCounts(a, d.evidence);
-  const { busy, run, Status } = useBusy();
+  const { isBusy, run, Status } = useBusy();
   const rescore = async () => {
     const out = await run("rescore", () => ai("rescore", pid));
     if (out) await reload("project", "activity");
@@ -116,7 +116,7 @@ export default function Commercial() {
           <h3>Commercial case</h3>
           <p className="muted" style={{ fontSize: ".9rem" }}>The commercial score is the AI's estimate. These are the assumptions behind it. Check each one, record what you find, and re-score once you have evidence.</p>
         </div>
-        {list.length && isLead ? <div className="row"><button className="btn small" type="button" disabled={busy === "rescore"} onClick={rescore}>Re-score with evidence</button></div> : null}
+        {list.length && isLead ? <div className="row"><button className="btn small" type="button" disabled={isBusy("rescore")} onClick={rescore}>Re-score with evidence</button></div> : null}
       </div>
       <Status k="rescore" text="Re-scoring with your evidence…" />
       {list.length ? (

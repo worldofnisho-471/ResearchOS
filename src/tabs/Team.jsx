@@ -64,7 +64,7 @@ function Invites() {
 function Publications() {
   const P = useP();
   const { d, pid, me, canEdit, run, act, name, reload, profiles } = P;
-  const { busy, run: runAi, Status } = useBusy();
+  const { isBusy, run: runAi, Status } = useBusy();
   const [f, setF] = useState({ title: "", year: "", link: "", abstract: "" });
   const [bulk, setBulk] = useState("");
   const [result, setResult] = useState("");
@@ -101,7 +101,7 @@ function Publications() {
           <h3>Team publications · {list.length}</h3>
           <p className="muted" style={{ fontSize: ".88rem" }}>Your group's published work. When an idea scores low, related directions build on it. {withOrcid} of {d.members.length} member{d.members.length === 1 ? "" : "s"} added an ORCID iD.</p>
         </div>
-        {canEdit ? <div className="row"><button className="btn small primary" type="button" disabled={busy === "orcid"} onClick={importOrcid}>Import from ORCID</button></div> : null}
+        {canEdit ? <div className="row"><button className="btn small primary" type="button" disabled={isBusy("orcid")} onClick={importOrcid}>Import from ORCID</button></div> : null}
       </div>
       <Status k="orcid" text="Reading public ORCID records…" />
       {result ? <p className="saved" role="status">{result}</p> : null}
