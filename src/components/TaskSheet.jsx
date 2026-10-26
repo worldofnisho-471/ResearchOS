@@ -4,6 +4,8 @@ import { supabase } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
 import { ago, allMilestones, STATUSES } from "../lib/util.js";
 import { Avatar, ConfirmButton } from "./ui.jsx";
+import MentionBox from "./MentionBox.jsx";
+import { mentionable, mentionedIds, nudge, splitMentions } from "../lib/mentions.js";
 
 export async function setStatus(P, t, s, onBlocked) {
   if (!t || !P.canEdit || t.status === s) return;
@@ -17,7 +19,7 @@ export async function setStatus(P, t, s, onBlocked) {
 /** Opens a task to edit it, comment on it, or jump to its result and notes. task === "new" adds one. */
 export default function TaskSheet({ task, focus, onClose }) {
   const P = useP();
-  const { d, pid, me, canEdit, isLead, run, act, name } = P;
+  const { d, pid, me, canEdit, run, act, name } = P;
   const isNew = task === "new";
   const t = isNew ? null : d.tasks.find((x) => x.id === task.id) || task;
   const ms = allMilestones(d.project, d.tasks);
@@ -62,12 +64,20 @@ export default function TaskSheet({ task, focus, onClose }) {
     }
     onClose();
   };
+  const people = mentionable(d.members, name);
   const post = async () => {
     const body = comment.trim();
     if (!body) return;
-    if (await run(supabase.from("comments").insert({ project_id: pid, task_id: t.id, author_id: me, body }), ["comments"])) {
-      setComment(""); act(`commented on "${t.title}"`, t.id);
-    }
+    const saved = await run(supabase.from("comments").insert({ project_id: pid, task_id: t.id, author_id: me, body }).select().single(), ["comments"]);
+    if (!saved) return;
+    setComment("");
+    const tagged = mentionedIds(body, people).filter((id) => id !== me);
+    if (tagged.length) {
+      const { error } = await supabase.from("mentions").insert(tagged.map((id) => ({ project_id: pid, task_id: t.id, comment_id: saved.id, mentioned_user_id: id, author_id: me })));
+      if (error) P.toast("Comment posted, but the mention notifications couldn't be saved.");
+      else nudge(tagged);
+      act(`mentioned ${tagged.map(name).join(", ")} on "${t.title}"`, t.id);
+    } else act(`commented on "${t.title}"`, t.id);
   };
   const del = async () => {
     if (await run(supabase.from("tasks").delete().eq("id", t.id), ["tasks", "results", "comments", "notes"])) {
@@ -131,16 +141,17 @@ export default function TaskSheet({ task, focus, onClose }) {
                     <Avatar id={c.author_id} name={name(c.author_id)} />
                     <div>
                       <div className="line1"><strong>{name(c.author_id)}</strong><span className="when">{ago(c.created_at)}</span>
-                        {c.author_id === me || isLead ? <button className="linkbtn" type="button" onClick={() => run(supabase.from("comments").delete().eq("id", c.id), ["comments"])}>Delete</button> : null}
+                        {c.author_id === me ? <ConfirmButton className="linkbtn" confirm="Click again to delete" onConfirm={() => run(supabase.from("comments").delete().eq("id", c.id), ["comments"])}>Delete</ConfirmButton> : null}
                       </div>
-                      <p>{c.body}</p>
+                      <p>{splitMentions(c.body, people).map((part, i) => typeof part === "string" ? part
+                        : <span key={i} className={"mention" + (part.id === me ? " me" : "")}>{part.mention}</span>)}</p>
                     </div>
                   </div>
                 )) : <p className="muted" style={{ fontSize: ".88rem" }}>No comments yet. Ask a question or share an update.</p>}
               </div>
               {P.isMember ? (
                 <div className="composer">
-                  <textarea id="c-text" aria-label="Write a comment" placeholder="Write a comment…" value={comment} onChange={(e) => setComment(e.target.value)} />
+                  <MentionBox id="c-text" label="Write a comment" placeholder="Write a comment… type @ to mention someone" value={comment} onChange={setComment} people={people.filter((p) => p.id !== me)} />
                   <div className="row"><button className="btn small primary" type="button" onClick={post}>Post comment</button></div>
                 </div>
               ) : null}

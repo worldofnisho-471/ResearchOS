@@ -389,3 +389,35 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .pub-remove { position: absolute; top: -2px; right: 12px; background: var(--surface); padding: 0 6px; }
 .pub-form div.grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
 @media (max-width: 560px) { .pub-form div.grid { grid-template-columns: 1fr; } }
+
+/* App toolbar: on every signed-in page */
+.appbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: -20px calc(-1 * max(16px, env(safe-area-inset-right, 0px))) 18px calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+  padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.appbar-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--ink); font: 700 1rem var(--f-display); }
+.appbar-brand .mark { width: 26px; height: 26px; font-size: 13px; border-radius: 7px; }
+.appbar-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.appbar-btn { display: inline-flex; align-items: center; gap: 7px; font: 500 .86rem var(--f-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; cursor: pointer; position: relative; white-space: nowrap; }
+.appbar-btn:hover { border-color: var(--accent); }
+.appbar-btn.who { padding: 3px 12px 3px 3px; max-width: 220px; }
+.appbar-btn.who .who-name { overflow: hidden; text-overflow: ellipsis; }
+.appbar-btn.has { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.appbar-btn .badge { background: var(--bad); color: #fff; border-radius: 99px; font: 600 .7rem var(--f-body); padding: 1px 6px; }
+@media (max-width: 560px) { .appbar-btn.who .who-name, .appbar-brand span:last-child { display: none; } }
+.mentions { position: relative; }
+.mention-pop { position: absolute; right: 0; top: calc(100% + 8px); width: min(380px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / .18); z-index: 30; }
+.mention-pop-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.mention-pop ul { list-style: none; margin: 0; padding: 4px; }
+.mention-item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; width: 100%; text-align: left; font: inherit; font-size: .88rem; color: var(--ink); background: none; border: 0; border-radius: 8px; padding: 9px 10px; cursor: pointer; }
+.mention-item > span { display: grid; gap: 2px; min-width: 0; }
+.mention-item:hover { background: var(--paper); }
+.mention-item.unread { background: var(--accent-soft); }
+.mention-snip { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* @ in comments */
+.mention-box { position: relative; }
+.mention-list { position: absolute; left: 0; bottom: calc(100% + 4px); z-index: 5; list-style: none; margin: 0; padding: 4px; min-width: 220px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .16); }
+.mention-list button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; font-size: .88rem; color: var(--ink); background: none; border: 0; border-radius: 7px; padding: 6px 8px; cursor: pointer; }
+.mention-list button.on, .mention-list button:hover { background: var(--accent-soft); }
+.mention { color: var(--accent); font-weight: 600; }
+.mention.me { background: var(--accent-soft); border-radius: 4px; padding: 0 3px; }

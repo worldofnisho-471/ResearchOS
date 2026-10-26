@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useP } from "../lib/project.jsx";
 import { ai } from "../lib/supabase.js";
-import { go } from "../lib/router.js";
+import { go, useRoute } from "../lib/router.js";
 import { allMilestones, fmtDate, STATUSES, today } from "../lib/util.js";
 import { Avatar, useBusy } from "../components/ui.jsx";
 import TaskSheet, { setStatus } from "../components/TaskSheet.jsx";
@@ -79,6 +79,13 @@ export default function Plan() {
   const P = useP();
   const { d, pid, me, canEdit, isLead, name, reload } = P;
   const [open, setOpen] = useState(null);
+  // A link like #/p/<project>/plan/<task> (from a mention) opens that task straight away.
+  const sub = useRoute()[3];
+  useEffect(() => {
+    if (!sub) return;
+    const t = d.tasks.find((x) => x.id === sub);
+    if (t) { setOpen({ task: t, focus: "c-text" }); go(`p/${pid}/plan`); }
+  }, [sub, d.tasks, pid]);
   const [q, setQ] = useState(""); const [owner, setOwner] = useState("any"); const [msF, setMsF] = useState("all"); const [upd, setUpd] = useState("any");
   const [armed, setArmed] = useState(false);
   const { isBusy, run, Status, setErr } = useBusy();

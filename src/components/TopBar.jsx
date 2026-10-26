@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
-import { Avatar } from "./ui.jsx";
 
 export function useMyProfile(session) {
   const [p, setP] = useState(null);
@@ -11,24 +10,17 @@ export function useMyProfile(session) {
   return p;
 }
 
-export default function TopBar({ session, crumb, title, children }) {
-  const me = useMyProfile(session);
-  const name = (me && me.display_name) || session.user.email;
+/** Page header: where you are, plus page-specific extras (who's here, your role). Account controls are in the AppBar. */
+export default function TopBar({ crumb, title, children }) {
   return (
     <header className="top">
       <div className="brand">
-        <a className="mark" href="#/" aria-label="ResearchOS home">R</a>
         <div className="proj">
           <span className="label">{crumb ? <button className="crumb" type="button" onClick={() => go("")}>← All projects</button> : "ResearchOS"}</span>
           <h1>{title}</h1>
         </div>
       </div>
-      <div className="topbar-right">
-        {children}
-        <button className="menu-btn" type="button" onClick={() => go("profile")} title="Your profile and ORCID iD">
-          <Avatar id={session.user.id} name={name} size="sm" /> {name}
-        </button>
-      </div>
+      {children ? <div className="topbar-right">{children}</div> : null}
     </header>
   );
 }

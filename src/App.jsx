@@ -7,6 +7,7 @@ import Home from "./pages/Home.jsx";
 import Invite from "./pages/Invite.jsx";
 import Profile from "./pages/Profile.jsx";
 import Project from "./pages/Project.jsx";
+import AppBar from "./components/AppBar.jsx";
 
 export default function App() {
   return <ToastProvider><Shell /></ToastProvider>;
@@ -36,8 +37,13 @@ function Shell() {
   const [r0, r1, r2] = route;
   if (r0 === "invite" && r1) return <Invite token={r1} session={session} />;
   if (!session) return <Auth />;
-  if (r0 === "p" && r1) return <Project key={r1} pid={r1} tab={r2 || ""} session={session} />;
-  if (r0 === "profile") return <Profile session={session} />;
-  if (r0 && r0 !== "") { go(""); return null; }
-  return <Home session={session} />;
+  if (r0 && !["p", "profile"].includes(r0)) { go(""); return null; }
+  return (
+    <>
+      <AppBar session={session} />
+      {r0 === "p" && r1 ? <Project key={r1} pid={r1} tab={r2 || ""} session={session} />
+        : r0 === "profile" ? <Profile session={session} />
+        : <Home session={session} />}
+    </>
+  );
 }

@@ -57,7 +57,6 @@ export default function Profile({ session }) {
             <p className={"status" + (msg.err ? " err" : "")} role="status">{msg.text}</p>
           </div>
         </form>
-        <div className="row"><button className="btn small" type="button" onClick={() => supabase.auth.signOut().then(() => go(""))}>Sign out</button></div>
       </main>
     </div>
   );

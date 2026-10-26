@@ -172,6 +172,20 @@ create table if not exists public.econ (
   updated_at timestamptz not null default now()
 );
 
+-- @mentions in task comments: one row per person mentioned, cleared when they read it
+create table if not exists public.mentions (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  task_id uuid not null references public.tasks (id) on delete cascade,
+  comment_id uuid not null references public.comments (id) on delete cascade,
+  mentioned_user_id uuid not null references auth.users (id) on delete cascade,
+  author_id uuid not null references auth.users (id) on delete cascade default auth.uid(),
+  read_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (comment_id, mentioned_user_id)
+);
+create index if not exists mentions_user_idx on public.mentions (mentioned_user_id, read_at);
+
 -- AI work runs as background jobs; the app watches this table for the result
 create table if not exists public.ai_jobs (
   id uuid primary key default gen_random_uuid(),
@@ -339,6 +353,7 @@ alter table public.directions enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.econ enable row level security;
 alter table public.ai_jobs enable row level security;
+alter table public.mentions enable row level security;
 
 drop policy if exists profiles_read on public.profiles;
 create policy profiles_read on public.profiles for select using (id = auth.uid() or public.shares_project(id));
@@ -398,7 +413,19 @@ create policy comments_read on public.comments for select using (public.is_membe
 drop policy if exists comments_insert on public.comments;
 create policy comments_insert on public.comments for insert with check (public.is_member(project_id) and author_id = auth.uid());
 drop policy if exists comments_delete on public.comments;
-create policy comments_delete on public.comments for delete using (author_id = auth.uid() or public.is_lead(project_id));
+-- Only the person who wrote a comment can delete it (not even a Lead can delete someone else's)
+create policy comments_delete on public.comments for delete using (author_id = auth.uid());
+
+-- You see only mentions of you; the comment's author creates them, only for project members; you mark yours read
+drop policy if exists mentions_read on public.mentions;
+create policy mentions_read on public.mentions for select using (mentioned_user_id = auth.uid() or author_id = auth.uid());
+drop policy if exists mentions_insert on public.mentions;
+create policy mentions_insert on public.mentions for insert with check (
+  author_id = auth.uid() and public.is_member(project_id)
+  and exists (select 1 from public.comments c where c.id = mentions.comment_id and c.author_id = auth.uid() and c.project_id = mentions.project_id and c.task_id = mentions.task_id)
+  and exists (select 1 from public.project_members m where m.project_id = mentions.project_id and m.user_id = mentioned_user_id));
+drop policy if exists mentions_update on public.mentions;
+create policy mentions_update on public.mentions for update using (mentioned_user_id = auth.uid()) with check (mentioned_user_id = auth.uid());
 
 drop policy if exists ai_jobs_read on public.ai_jobs;
 create policy ai_jobs_read on public.ai_jobs for select using (public.is_member(project_id));
@@ -431,7 +458,7 @@ end $$;
 -- ---------- Realtime ----------
 do $$ declare t text; begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log', 'ai_jobs'] loop
+    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log', 'ai_jobs', 'mentions'] loop
       if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;
