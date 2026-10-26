@@ -8,8 +8,11 @@ import { useMyProfile } from "./TopBar.jsx";
 /** Mentions of you across all your projects: unread first, newest first. */
 function useMentions(me) {
   const [items, setItems] = useState([]);
+  const [problem, setProblem] = useState("");
   const load = useCallback(async () => {
-    const { data } = await supabase.from("mentions").select("*").eq("mentioned_user_id", me).order("created_at", { ascending: false }).limit(20);
+    const { data, error } = await supabase.from("mentions").select("*").eq("mentioned_user_id", me).order("created_at", { ascending: false }).limit(20);
+    if (error) { console.warn("Mentions:", error.message); setProblem(error.message); return; }
+    setProblem("");
     const rows = data || [];
     if (!rows.length) { setItems([]); return; }
     const ids = (k) => [...new Set(rows.map((r) => r[k]))];
@@ -33,14 +36,14 @@ function useMentions(me) {
     ch.on("broadcast", { event: "mention" }, () => load()).subscribe();
     return () => { clearInterval(t); window.removeEventListener("focus", load); supabase.removeChannel(ch); };
   }, [me, load]);
-  return { items, load };
+  return { items, load, problem };
 }
 
 export default function AppBar({ session }) {
   const me = session.user.id;
   const profile = useMyProfile(session);
   const name = (profile && profile.display_name) || session.user.email;
-  const { items, load } = useMentions(me);
+  const { items, load, problem } = useMentions(me);
   const unread = items.filter((m) => !m.read_at);
   const [open, setOpen] = useState(false);
   const box = useRef(null);
@@ -80,6 +83,7 @@ export default function AppBar({ session }) {
                 <strong>Mentions</strong>
                 {unread.length ? <button className="linkbtn" type="button" onClick={() => markRead(unread.map((m) => m.id))}>Mark all read</button> : null}
               </div>
+              {problem ? <p className="status err" style={{ padding: "10px 14px" }}>Mentions aren't available: {/does not exist|relation|schema cache/i.test(problem) ? "the mentions table is missing. Re-run schema.sql in Supabase." : problem}</p> : null}
               {items.length ? (
                 <ul>
                   {items.map((m) => (

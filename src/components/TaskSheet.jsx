@@ -74,7 +74,9 @@ export default function TaskSheet({ task, focus, onClose }) {
     const tagged = mentionedIds(body, people).filter((id) => id !== me);
     if (tagged.length) {
       const { error } = await supabase.from("mentions").insert(tagged.map((id) => ({ project_id: pid, task_id: t.id, comment_id: saved.id, mentioned_user_id: id, author_id: me })));
-      if (error) P.toast("Comment posted, but the mention notifications couldn't be saved.");
+      if (error) P.toast(/mentions|relation|schema cache/i.test(error.message) && !/security/i.test(error.message)
+        ? "Comment posted, but mentions aren't set up yet: re-run schema.sql in Supabase."
+        : "Comment posted, but the mention couldn't be saved: " + error.message);
       else nudge(tagged);
       act(`mentioned ${tagged.map(name).join(", ")} on "${t.title}"`, t.id);
     } else act(`commented on "${t.title}"`, t.id);
