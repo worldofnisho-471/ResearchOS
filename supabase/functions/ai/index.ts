@@ -421,68 +421,100 @@ async function importWorks(sb: SupabaseClient, uid: string, b: any) {
   return { members_with_orcid: withOrcid.length, members: (members ?? []).length, added };
 }
 
+// Related directions run in three phases. Each phase is its own function call with its own time limit,
+// and hands its results to the next phase, so the whole thing is never cut off by the ~150 s limit.
 async function directions(sb: SupabaseClient, uid: string, b: any) {
   need(await roleOf(sb, b.projectId, uid), ["Lead", "Researcher"], "suggest related directions");
-  await progress(b, "Importing the team's ORCID publications…");
-  await importWorks(sb, uid, b).catch(() => null);
-  const [{ data: p }, { data: pubs }] = await Promise.all([
-    sb.from("projects").select("*").eq("id", b.projectId).single(),
-    sb.from("publications").select("title, year, abstract, topics").eq("project_id", b.projectId).order("year", { ascending: false }).limit(60),
-  ]);
+  const phase = Number(b.phase) || 1;
+  const { data: p } = await sb.from("projects").select("*").eq("id", b.projectId).single();
   if (!p?.assessment) throw new HttpError(400, "Run the idea check first.");
-  const pubList = (pubs ?? []).map((x: any) => `- ${x.title}${x.year ? ` (${x.year})` : ""}${(x.topics ?? []).length ? ` [${x.topics.join(", ")}]` : ""}${x.abstract ? ": " + String(x.abstract).slice(0, 250) : ""}`).join("\n");
-  // Step 1: candidates
-  await progress(b, "Finding candidate directions…");
-  const c = await llmJSON(
+  const loadPubs = async () => {
+    const { data: pubs } = await sb.from("publications").select("title, year, abstract, topics").eq("project_id", b.projectId).order("year", { ascending: false }).limit(60);
+    const list = (pubs ?? []).map((x: any) => `- ${x.title}${x.year ? ` (${x.year})` : ""}${(x.topics ?? []).length ? ` [${x.topics.join(", ")}]` : ""}${x.abstract ? ": " + String(x.abstract).slice(0, 250) : ""}`).join("\n");
+    return { pubs: pubs ?? [], pubList: list };
+  };
+
+  if (phase === 1) {
+    await progress(b, "Importing the team's ORCID publications…");
+    await importWorks(sb, uid, b).catch(() => null);
+    const { pubList } = await loadPubs();
+    await progress(b, "Finding candidate directions…");
+    const c = await llmJSON(
 `You are a research strategy advisor. A team's idea scored ${p.viability_score}/100 (${p.verdict}).
 Idea: ${p.title}. ${p.idea_text}
 Why it scored as it did: ${p.assessment.summary ?? ""} Challenges: ${(p.assessment.challenges ?? []).join("; ")}
 The team's publications:
 ${pubList || "(none listed: infer expertise from the idea only and keep fit conservative)"}
-Propose 6 related or adjacent research directions that build on the team's topics and methods and avoid what sank the idea.
+Propose 5 related or adjacent research directions that build on the team's topics and methods and avoid what sank the idea.
 Return JSON: {"expertise_summary":"2 sentences on what the publications show the team is good at","candidates":[{"title":"short","phrase":"3-6 word search phrase for the field"}]}`);
-  const cands = (c.candidates ?? []).filter((x: any) => x?.title && x?.phrase).slice(0, 6);
-  if (!cands.length) throw new HttpError(502, "The AI returned no candidate directions. Try again.");
-  // Step 2: signals
-  await progress(b, "Checking paper trends, NIH funding and market signals…");
-  const [trends, funding, market] = await Promise.all([
-    Promise.all(cands.map((x: any) => openalexTrend(x.phrase))),
-    Promise.all(cands.map((x: any) => nihFunding(x.phrase))),
-    llmJSON(
-`Use web search to find current commercial signals for each of these research directions: recent products, startups, investment or deals, patent activity, and any market-size figure. Only report facts you found, each with its source URL.
-${cands.map((x: any, i: number) => `${i}. ${x.title} (${x.phrase})`).join("\n")}
-Return JSON: {"market":[{"index":0,"signals":[{"claim":"1 sentence","number":"the figure, if any","source_url":"https://..."}]}]}`, true).catch(() => ({ market: [] })),
-  ]);
-  const marketBy = new Map((market.market ?? []).map((m: any) => [Number(m.index), (m.signals ?? []).filter((s: any) => /^https?:\/\//.test(String(s.source_url ?? "")))]));
-  const evidence = cands.map((x: any, i: number) => ({
-    index: i, title: x.title, phrase: x.phrase,
-    papers_per_year: trends[i], nih_funding: funding[i], market: marketBy.get(i) ?? [],
-  }));
-  // Step 3: tally
+    const cands = (c.candidates ?? []).filter((x: any) => x?.title && x?.phrase).slice(0, 5).map((x: any) => ({ title: String(x.title), phrase: String(x.phrase) }));
+    if (!cands.length) throw new HttpError(502, "The AI returned no candidate directions. Try again.");
+    return await nextPhase(b, { phase: 2, state: { expertise_summary: String(c.expertise_summary ?? ""), cands } }, "Checking paper trends, NIH funding and market signals…");
+  }
+
+  if (phase === 2) {
+    const cands = (b.state?.cands ?? []).slice(0, 5);
+    if (!cands.length) throw new HttpError(400, "Missing candidate directions. Try again.");
+    await progress(b, "Checking paper trends, NIH funding and market signals…");
+    // Every lookup runs at once; a slow or failed one just leaves that signal empty.
+    const [trends, funding, market] = await Promise.all([
+      Promise.all(cands.map((x: any) => openalexTrend(x.phrase))),
+      Promise.all(cands.map((x: any) => nihFunding(x.phrase))),
+      Promise.all(cands.map((x: any) => llmJSON(
+`Use web search to find current commercial signals for this research direction: "${x.title}" (${x.phrase}).
+Look for recent products, startups, investment or deals, patent activity, and any market-size figure. Only report facts you found, each with its source URL. Up to 4 signals.
+Return JSON: {"signals":[{"claim":"1 sentence","number":"the figure, if any","source_url":"https://..."}]}`, true).catch(() => ({ signals: [] })))),
+    ]);
+    const evidence = cands.map((x: any, i: number) => ({
+      title: x.title, phrase: x.phrase, papers_per_year: trends[i], nih_funding: funding[i],
+      market: (market[i]?.signals ?? []).filter((g: any) => /^https?:\/\//.test(String(g.source_url ?? ""))).slice(0, 4),
+    }));
+    return await nextPhase(b, { phase: 3, state: { ...b.state, evidence } }, "Ranking the directions…");
+  }
+
+  // Phase 3: score each candidate in its own short call, all at once.
+  const evidence = (b.state?.evidence ?? []).slice(0, 5);
+  if (!evidence.length) throw new HttpError(400, "Missing direction evidence. Try again.");
   await progress(b, "Ranking the directions…");
-  const out = await llmJSON(
-`Rank these candidate research directions for a team whose idea scored low. Use ONLY the evidence given; never invent numbers.
+  const { pubs, pubList } = await loadPubs();
+  const scoreOne = (ev: any) => llmJSON(
+`Score this candidate research direction for a team whose idea scored ${p.viability_score}/100. Use ONLY the evidence given; never invent numbers.
 Team's publications:
 ${pubList || "(none)"}
-Candidates with evidence (papers_per_year from OpenAlex, nih_funding from NIH RePORTER, market from web search):
-${JSON.stringify(evidence).slice(0, 24000)}
-Score each on fit (with the team's publications), momentum (research and funding growth), commercial_pull (market signals), room (active but not crowded) and feasibility. Return the top 3-5, best first.
-Return JSON: {"suggestions":[{"index":0,"title":"","pitch":"2 sentences","builds_on":["exact titles from the team's publications"],"scores":{"fit":0,"momentum":0,"commercial_pull":0,"room":0,"feasibility":0},"overall":0,"reasons":["3-4 reasons citing the evidence"],"signals":[{"claim":"","number":"","source_url":""}],"first_experiment":"cheapest test","risk":"1 sentence"}]}
+Candidate with evidence (papers_per_year from OpenAlex, nih_funding from NIH RePORTER, market from web search):
+${JSON.stringify(ev).slice(0, 6000)}
+Score 0-100: fit (with the team's publications), momentum (research and funding growth), commercial_pull (market signals), room (active but not crowded), feasibility.
+Return JSON: {"title":"","pitch":"2 sentences","builds_on":["exact titles from the team's publications"],"scores":{"fit":0,"momentum":0,"commercial_pull":0,"room":0,"feasibility":0},"overall":0,"reasons":["3-4 reasons citing the evidence"],"signals":[{"claim":"","number":"","source_url":""}],"first_experiment":"cheapest test","risk":"1 sentence"}
 Signals must be copied from the evidence (market items keep their source_url; for papers or funding use https://openalex.org or https://reporter.nih.gov as the source).`);
-  const titles = new Set((pubs ?? []).map((x: any) => String(x.title).toLowerCase().trim()));
-  const suggestions = (out.suggestions ?? []).slice(0, 5).map((s: any) => ({
-    title: String(s.title ?? ""), pitch: String(s.pitch ?? ""),
+  const scored = await Promise.all(evidence.map((ev: any) => scoreOne(ev).catch(() => (remaining() > 45000 ? scoreOne(ev) : null)).catch(() => null)));
+  const titles = new Set(pubs.map((x: any) => String(x.title).toLowerCase().trim()));
+  const suggestions = scored.map((s: any, i: number) => s && ({
+    title: String(s.title || evidence[i].title), pitch: String(s.pitch ?? ""),
     builds_on: (s.builds_on ?? []).filter((t: any) => titles.has(String(t).toLowerCase().trim())),
     scores: Object.fromEntries(["fit", "momentum", "commercial_pull", "room", "feasibility"].map((k) => [k, clamp(s.scores?.[k])])),
     overall: clamp(s.overall), reasons: (s.reasons ?? []).slice(0, 5).map(String),
     signals: (s.signals ?? []).filter((g: any) => /^https?:\/\//.test(String(g.source_url ?? ""))).slice(0, 6),
-    trend: evidence[Number(s.index)]?.papers_per_year ?? null, funding: evidence[Number(s.index)]?.nih_funding?.by_year ?? null,
+    trend: evidence[i].papers_per_year ?? null, funding: evidence[i].nih_funding?.by_year ?? null,
     first_experiment: String(s.first_experiment ?? ""), risk: String(s.risk ?? ""),
-  })).sort((a: any, b2: any) => b2.overall - a.overall);
-  const { data, error } = await sb.from("directions").insert({ project_id: b.projectId, expertise_summary: String(c.expertise_summary ?? ""), suggestions, based_on_count: (pubs ?? []).length, run_by: uid }).select().single();
+  })).filter(Boolean).sort((a: any, b2: any) => b2.overall - a.overall);
+  if (!suggestions.length) throw new HttpError(502, "The AI couldn't rank the directions. Try again in a minute.");
+  const { data, error } = await sb.from("directions").insert({ project_id: b.projectId, expertise_summary: String(b.state?.expertise_summary ?? ""), suggestions, based_on_count: pubs.length, run_by: uid }).select().single();
   if (error) throw new HttpError(500, error.message);
   await log(sb, b.projectId, uid, `suggested ${suggestions.length} related directions`);
   return data;
+}
+
+/** Starts the next phase of a multi-phase job as a fresh function call that keeps the same job row. */
+async function nextPhase(b: any, extra: Record<string, unknown>, message: string) {
+  await progress(b, message);
+  const r = await fetch(`${env("SUPABASE_URL")}/functions/v1/ai`, {
+    method: "POST",
+    headers: { Authorization: b._auth, apikey: env("SUPABASE_ANON_KEY"), "Content-Type": "application/json" },
+    body: JSON.stringify({ action: b.action, projectId: b.projectId, continueJob: b._job, ...extra }),
+  });
+  if (!r.ok) throw new HttpError(502, `Couldn't start the next step (error ${r.status}). Try again.`);
+  await r.body?.cancel();
+  return { __continue: true };
 }
 
 async function rescore(sb: SupabaseClient, uid: string, b: any) {
@@ -530,26 +562,37 @@ Deno.serve(async (req) => {
     const fn = ACTIONS[String(b.action)];
     if (!fn) throw new HttpError(400, "Unknown action.");
     if (!b.projectId) throw new HttpError(400, "Missing project.");
-    const { data: job, error } = await sb.from("ai_jobs").insert({ project_id: b.projectId, action: String(b.action), created_by: user.id }).select("id").single();
-    if (error || !job) throw new HttpError(error && /does not exist|relation|schema cache/i.test(error.message) ? 500 : 403,
-      error && /does not exist|relation|schema cache/i.test(error.message) ? "The ai_jobs table is missing. Re-run schema.sql in Supabase." : "You're not a member of this project.");
-    b._job = job.id; b._sb = sb;
+    let job: { id: string } | null = null;
+    if (b.continueJob) {
+      // Next phase of a job this user already started: keep reporting on the same row.
+      const { data } = await sb.from("ai_jobs").select("id, status, created_by, project_id").eq("id", String(b.continueJob)).maybeSingle();
+      if (!data || data.status !== "running" || data.created_by !== user.id || data.project_id !== b.projectId) throw new HttpError(409, "That AI job has already finished.");
+      job = { id: data.id };
+    } else {
+      const { data, error } = await sb.from("ai_jobs").insert({ project_id: b.projectId, action: String(b.action), created_by: user.id }).select("id").single();
+      if (error || !data) throw new HttpError(error && /does not exist|relation|schema cache/i.test(error.message) ? 500 : 403,
+        error && /does not exist|relation|schema cache/i.test(error.message) ? "The ai_jobs table is missing. Re-run schema.sql in Supabase." : "You're not a member of this project.");
+      job = data;
+    }
+    b._job = job.id; b._sb = sb; b._auth = auth;
     deadline = Date.now() + 140000;
+    const jobId = job.id;
     const work = (async () => {
       try {
-        const result = await fn(sb, user.id, b);
-        await sb.from("ai_jobs").update({ status: "done", result: result ?? {}, progress: "", updated_at: new Date().toISOString() }).eq("id", job.id);
+        const result: any = await fn(sb, user.id, b);
+        if (result && result.__continue) return; // the next phase finishes the job
+        await sb.from("ai_jobs").update({ status: "done", result: result ?? {}, progress: "", updated_at: new Date().toISOString() }).eq("id", jobId);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Something went wrong.";
-        await sb.from("ai_jobs").update({ status: "error", error: msg, updated_at: new Date().toISOString() }).eq("id", job.id);
+        await sb.from("ai_jobs").update({ status: "error", error: msg, updated_at: new Date().toISOString() }).eq("id", jobId);
       }
     })();
     if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
       EdgeRuntime.waitUntil(work);
-      return json({ jobId: job.id }, 202);
+      return json({ jobId }, 202);
     }
     await work;
-    return json({ jobId: job.id });
+    return json({ jobId });
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500;
     return json({ error: e instanceof Error ? e.message : "Something went wrong." }, status);

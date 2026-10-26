@@ -72,13 +72,13 @@ export function ProjectProvider({ pid, session, tab, children }) {
   // Pick up AI jobs that are already running: after a page reload, or started by a teammate.
   const track = useCallback((row) => {
     const key = JOB_KEY[row.action];
-    if (!key || row.status !== "running" || Date.now() - Date.parse(row.created_at) > 175000) return;
+    if (!key || row.status !== "running" || Date.now() - Date.parse(row.updated_at || row.created_at) > 175000) return;
     const id = pid + ":" + key;
     if (getJob(id)?.busy) return;
     runJob(id, (pr) => waitForJob(row.id, pr)).then(() => Promise.all(JOB_RELOAD[row.action].map(load)));
   }, [pid, load]);
   useEffect(() => {
-    supabase.from("ai_jobs").select("id, action, status, created_at").eq("project_id", pid).eq("status", "running")
+    supabase.from("ai_jobs").select("id, action, status, created_at, updated_at").eq("project_id", pid).eq("status", "running")
       .then(({ data }) => (data || []).forEach(track));
   }, [pid, track]);
 

@@ -7,17 +7,17 @@ export const configured = Boolean(url && key);
 export const supabase = configured ? createClient(url, key) : null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const STALE_MS = 175000; // Supabase stops a function after ~150 s; a job still "running" after this was cut off
+const STALE_MS = 175000; // Supabase stops a function after ~150 s; a job with no progress for this long was cut off
 
 /** Waits for a background AI job to finish, reporting its progress. Resolves to its result. */
 export async function waitForJob(jobId, onProgress) {
   for (let i = 0; ; i++) {
-    const { data, error } = await supabase.from("ai_jobs").select("status, progress, result, error, created_at").eq("id", jobId).maybeSingle();
+    const { data, error } = await supabase.from("ai_jobs").select("status, progress, result, error, created_at, updated_at").eq("id", jobId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) throw new Error("The AI job disappeared. Try again.");
     if (data.status === "done") return data.result;
     if (data.status === "error") throw new Error(data.error || "The AI step failed. Try again.");
-    if (Date.now() - Date.parse(data.created_at) > STALE_MS) throw new Error("The AI took too long and was stopped. Try again in a minute.");
+    if (Date.now() - Date.parse(data.updated_at || data.created_at) > STALE_MS) throw new Error("The AI took too long and was stopped. Try again in a minute.");
     if (data.progress && onProgress) onProgress(data.progress);
     await sleep(i < 5 ? 1500 : 2500);
   }
