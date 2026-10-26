@@ -33,11 +33,12 @@ export function ConfirmButton({ className = "btn small danger", confirm, onConfi
 
 /** Runs an AI call as a job that survives tab switches; shows progress or the error next to its button. */
 export function useBusy() {
-  const { pid } = useP();
+  const { pid, broadcast } = useP();
   useJobsVersion();
   const id = (k) => pid + ":" + k;
   const isBusy = (k) => !!getJob(id(k))?.busy;
-  const run = (k, fn) => runJob(id(k), fn);
+  // Starting an AI job also nudges teammates' screens, so they show it running too.
+  const run = (k, fn) => { setTimeout(() => broadcast?.(["ai_jobs"]), 1500); return runJob(id(k), fn); };
   const setErr = (e) => setJobError(id(e.key), e.msg);
   const Status = ({ k, text = "Working… this can take up to a minute." }) => {
     const j = getJob(id(k));

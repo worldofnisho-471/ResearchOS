@@ -107,5 +107,5 @@ Every AI step (idea check, plan, review, related directions, ORCID import, re-sc
 - **"Couldn't reach the AI function"**: the function must be named `ai` and deployed; check its logs in Supabase.
 - **"GEMINI_API_KEY is not set"** or similar: add the secret, then redeploy the function.
 - **ORCID import finds nothing**: check `OPENALEX_API_KEY` is set and the ORCID record has public works.
-- **Changes from teammates don't appear live**: re-run `schema.sql` (it adds the tables to Supabase Realtime). A page refresh always shows the latest data.
+- **Changes from teammates don't appear live**: the app sends changes browser-to-browser (Supabase Realtime Broadcast) and also re-checks every 20 seconds, so they should appear within seconds. If they only appear after 20 seconds, check that Realtime is enabled for the project in Supabase.
 - **Invite says it was sent to another email**: invitees must sign in with the exact address the Lead entered.

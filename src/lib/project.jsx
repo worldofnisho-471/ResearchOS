@@ -54,7 +54,15 @@ export function ProjectProvider({ pid, session, tab, children }) {
     if (key === "project" && !data) setMissing(true);
   }, [pid]);
 
-  const reload = useCallback((...keys) => Promise.all(keys.flat().map(load)), [load]);
+  // After you change something: reload it here, and tell everyone else on the project to reload it too.
+  const broadcast = useCallback((keys) => {
+    channelRef.current?.send?.({ type: "broadcast", event: "changed", payload: { keys } });
+  }, []);
+  const reload = useCallback((...keys) => {
+    const list = keys.flat();
+    broadcast(list);
+    return Promise.all(list.map(load));
+  }, [load, broadcast]);
   const soon = useCallback((key) => {
     clearTimeout(timers.current[key]);
     timers.current[key] = setTimeout(() => load(key), 120);
@@ -77,10 +85,21 @@ export function ProjectProvider({ pid, session, tab, children }) {
     if (getJob(id)?.busy) return;
     runJob(id, (pr) => waitForJob(row.id, pr)).then(() => Promise.all(JOB_RELOAD[row.action].map(load)));
   }, [pid, load]);
-  useEffect(() => {
+  const checkJobs = useCallback(() => {
     supabase.from("ai_jobs").select("id, action, status, created_at, updated_at").eq("project_id", pid).eq("status", "running")
       .then(({ data }) => (data || []).forEach(track));
   }, [pid, track]);
+  useEffect(() => { checkJobs(); }, [checkJobs]);
+
+  // Safety net: while the project is on screen, re-check every 20 s, and right away when you come back to the tab.
+  useEffect(() => {
+    const LIVE = ["project", "members", "tasks", "results", "notes", "comments", "reviews", "evidence", "publications", "directions", "activity", "econ"];
+    const refresh = () => { if (document.visibilityState === "visible") { LIVE.forEach(soon); checkJobs(); } };
+    const t = setInterval(refresh, 20000);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+  }, [soon, checkJobs]);
 
   // Live updates + who is here
   useEffect(() => {
@@ -91,6 +110,11 @@ export function ProjectProvider({ pid, session, tab, children }) {
       ch.on("postgres_changes", { event: "DELETE", schema: "public", table }, () => soon(key));
     }
     ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "ai_jobs", filter: `project_id=eq.${pid}` }, (e) => { if (e.new && e.new.created_by !== me) track(e.new); });
+    // Teammates' changes, sent browser to browser (works even if database change events are off)
+    ch.on("broadcast", { event: "changed" }, ({ payload }) => {
+      (payload?.keys || []).forEach((k) => { if (LOADERS[k]) soon(k); });
+      if ((payload?.keys || []).includes("ai_jobs")) checkJobs();
+    });
     ch.on("presence", { event: "sync" }, () => {
       const st = ch.presenceState();
       setOnline(Object.entries(st).map(([id, metas]) => ({ id, tab: metas[metas.length - 1]?.tab })));
@@ -98,7 +122,7 @@ export function ProjectProvider({ pid, session, tab, children }) {
     ch.subscribe((status) => { if (status === "SUBSCRIBED") ch.track({ tab: tab || "" }); });
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); channelRef.current = null; };
-  }, [pid, me, soon, track]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pid, me, soon, track, checkJobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { channelRef.current?.track?.({ tab: tab || "" }); }, [tab]);
 
@@ -117,7 +141,7 @@ export function ProjectProvider({ pid, session, tab, children }) {
   const role = (d.members.find((m) => m.user_id === me) || {}).role || null;
   const value = useMemo(() => {
     const name = (id) => (!id ? "Someone" : (profiles[id] && profiles[id].display_name) || (id === me ? "You" : "Teammate"));
-    const act = (text, target_id = null) => supabase.from("activity_log").insert({ project_id: pid, actor_id: me, text, target_id }).then(() => soon("activity"));
+    const act = (text, target_id = null) => supabase.from("activity_log").insert({ project_id: pid, actor_id: me, text, target_id }).then(() => { soon("activity"); broadcast(["activity"]); });
     /** Run a write; on failure show a toast. Reloads the given tables right away (realtime catches everyone else up). */
     const run = async (promise, keys = [], okMsg) => {
       const { error, data } = await promise;
@@ -133,10 +157,10 @@ export function ProjectProvider({ pid, session, tab, children }) {
     return {
       pid, me, d, profiles, name, loaded, missing, online, role, tab,
       isLead: role === "Lead", canEdit: role === "Lead" || role === "Researcher", isMember: !!role,
-      reload, run, act, toast,
+      reload, run, act, toast, broadcast,
       review: d.reviews[0] || null, directions: d.directions[0] || null,
     };
-  }, [pid, me, d, profiles, loaded, missing, online, role, tab, reload, soon, toast]);
+  }, [pid, me, d, profiles, loaded, missing, online, role, tab, reload, soon, toast, broadcast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
