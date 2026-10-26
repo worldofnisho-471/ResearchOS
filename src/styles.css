@@ -69,7 +69,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
 .btn.small { padding: 6px 11px; font-size: .82rem; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
-form.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+form.grid, div.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .field { display: grid; gap: 6px; min-width: 0; }
 .field.wide { grid-column: 1 / -1; }
 .field.row { display: flex; }
@@ -384,6 +384,8 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 3px; padding
 @media (prefers-reduced-motion: reduce) { .step .working { animation: none; } }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .pub-forms { display: grid; gap: 12px; margin-bottom: 14px; }
-.pub-form { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; margin: 0; position: relative; display: grid; gap: 8px; min-width: 0; }
+.pub-form { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 16px; margin: 0; position: relative; display: grid; gap: 10px; min-width: 0; }
 .pub-form legend { padding: 0 6px; }
 .pub-remove { position: absolute; top: -2px; right: 12px; background: var(--surface); padding: 0 6px; }
+.pub-form div.grid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (max-width: 560px) { .pub-form div.grid { grid-template-columns: 1fr; } }
