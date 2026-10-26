@@ -33,7 +33,7 @@ ResearchOS checks a research idea against real papers, turns it into a plan with
 | `ANTHROPIC_API_KEY` | from [console.anthropic.com](https://console.anthropic.com), if using Claude |
 | `ANTHROPIC_MODEL` | optional, defaults to `claude-sonnet-5-5` |
 | `OPENALEX_API_KEY` | free from [openalex.org](https://openalex.org) — needed for ORCID import and paper trends |
-| `SEMANTIC_SCHOLAR_API_KEY` | optional, raises the paper-search rate limit |
+| `SEMANTIC_SCHOLAR_API_KEY` | optional; without it the idea check falls back to OpenAlex when Semantic Scholar is busy |
 
 Keys live only in Supabase secrets. Never put them in the frontend or in Git.
 
@@ -66,7 +66,7 @@ npm run dev
 
 | Screen | What happens |
 |---|---|
-| **1 Idea check** | Semantic Scholar returns real papers; the AI scores viability using only those papers and lists the commercial assumptions behind its score. Below 50, related directions run automatically. |
+| **1 Idea check** | Semantic Scholar returns real papers (OpenAlex if it is busy or finds none); the AI scores viability using only those papers and lists the commercial assumptions behind its score. Below 50, related directions run automatically. |
 | **2 Research plan** | AI-generated milestones and tasks with measurable success criteria. Drag cards (long-press on phones), search and filter, assign, set due dates, comment. |
 | **3 Log results** | Record what happened and whether the criterion was met. |
 | **4 Dashboard** | Tasks by status, goal results, progress per milestone, what needs attention, workload. |

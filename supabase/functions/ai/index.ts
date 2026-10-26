@@ -140,6 +140,22 @@ async function semanticScholar(query: string) {
   } catch { return []; }
 }
 
+/** Related papers for the idea check: Semantic Scholar first, OpenAlex (with your key) if that is busy or finds nothing. */
+async function findPapers(query: string) {
+  const s2 = await semanticScholar(query);
+  if (s2.length) return { papers: s2, source: "Semantic Scholar" };
+  try {
+    const u = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=8&select=id,title,publication_year,doi,abstract_inverted_index${openalexKey()}`;
+    const r = await fetch(u, { signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return { papers: [], source: "" };
+    const d = await r.json();
+    const papers = (d.results ?? []).filter((w: any) => w.title).map((w: any) => ({
+      title: w.title as string, year: w.publication_year ?? null, url: w.doi ?? w.id ?? null, abstract: invertedToText(w.abstract_inverted_index),
+    }));
+    return { papers, source: papers.length ? "OpenAlex" : "" };
+  } catch { return { papers: [], source: "" }; }
+}
+
 function openalexKey() { const k = env("OPENALEX_API_KEY"); return k ? `&api_key=${encodeURIComponent(k)}` : ""; }
 
 function invertedToText(inv: Record<string, number[]> | null | undefined) {
@@ -229,8 +245,8 @@ async function assess(sb: SupabaseClient, uid: string, b: any) {
   need(await roleOf(sb, b.projectId, uid), ["Lead"], "run the idea check");
   const idea = { title: String(b.idea?.title ?? "").trim(), text: String(b.idea?.text ?? "").trim(), field: String(b.idea?.field ?? ""), goal: String(b.idea?.goal ?? "Academic paper") };
   if (!idea.title || !idea.text) throw new HttpError(400, "Add a title and a short description of the idea.");
-  await progress(b, "Searching Semantic Scholar for related papers…");
-  const papers = await semanticScholar(`${idea.title} ${idea.text.split(/\s+/).slice(0, 25).join(" ")}`);
+  await progress(b, "Searching for related papers…");
+  const { papers, source: paperSource } = await findPapers(`${idea.title} ${idea.text.split(/\s+/).slice(0, 25).join(" ")}`);
   const list = papers.map((p: any, i: number) => `[${i}] ${p.title} (${p.year ?? "n.d."}): ${p.abstract || "no abstract"}`).join("\n");
   await progress(b, `Assessing the idea against ${papers.length} papers…`);
   const ideaBlock = `Idea title: ${idea.title}
@@ -261,6 +277,7 @@ Use ids a1, a2, ... Label estimates as estimates; never present a guessed figure
   const assessment = {
     summary: String(out.summary ?? ""), novelty: out.novelty, feasibility: out.feasibility, commercial_potential: out.commercial_potential,
     challenges: out.challenges ?? [], gaps: out.gaps ?? [], assumptions: Array.isArray(extra.assumptions) ? extra.assumptions.slice(0, 8) : [],
+    paper_source: paperSource,
   };
   const verdict = ["Pursue", "Refine", "Rethink"].includes(out.verdict) ? out.verdict : "Refine";
   const score = clamp(out.viability_score);

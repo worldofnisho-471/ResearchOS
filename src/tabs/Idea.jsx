@@ -56,7 +56,7 @@ export default function Idea() {
       <div className="panel-head"><div>
         <span className="label">Stage 1</span>
         <h2>Is this idea worth pursuing?</h2>
-        <p className="muted">Get a viability score, the main challenges and open gaps, checked against real papers from Semantic Scholar.</p>
+        <p className="muted">Get a viability score, the main challenges and open gaps, checked against real papers from Semantic Scholar and OpenAlex.</p>
         {!isLead ? <p className="muted" style={{ fontSize: ".85rem" }}>Only Leads can change the idea or re-run the check.</p> : null}
       </div></div>
 
@@ -100,7 +100,7 @@ export default function Idea() {
             <section><h3>Gaps to explore</h3><ul className="clean">{(a.gaps || []).map((c, i) => <li key={i}>{c}</li>)}</ul></section>
             <section>
               <h3>Papers found · {d.papers.length}</h3>
-              <p className="muted" style={{ fontSize: ".85rem" }}>From Semantic Scholar. The assessment only discusses these papers.</p>
+              <p className="muted" style={{ fontSize: ".85rem" }}>From {a.paper_source || "Semantic Scholar"}. The assessment only discusses these papers.</p>
               <div className="papers">
                 {d.papers.length ? d.papers.map((x) => (
                   <a key={x.id} href={x.url || `https://www.semanticscholar.org/search?q=${encodeURIComponent(x.title)}`} target="_blank" rel="noopener">
