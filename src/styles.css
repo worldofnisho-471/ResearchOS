@@ -382,3 +382,4 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 3px; padding
 .step .working { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .step .working { animation: none; } }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }

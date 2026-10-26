@@ -7,12 +7,42 @@ import { Avatar, ConfirmButton, useBusy } from "../components/ui.jsx";
 
 const inviteLink = (token) => `${window.location.origin}${window.location.pathname}#/invite/${token}`;
 
+function inviteMessage(inv, title) {
+  const subject = `Join "${title || "our project"}" on ResearchOS`;
+  const body = `Hi,\n\nI've added you to our research project "${title || "our project"}" on ResearchOS as a ${inv.role}.\n\nTo join, open this link and sign in (or create an account) with ${inv.email}:\n${inviteLink(inv.token)}\n\nThe link works for 14 days.`;
+  return { subject, body };
+}
+
+/** Ways to send an invite: web Gmail / Outlook (work without a desktop mail app), the computer's mail app, or copy. */
+function SendInvite({ inv, primary }) {
+  const { d, toast } = useP();
+  const { subject, body } = inviteMessage(inv, d.project.title);
+  const q = (o) => Object.entries(o).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+  const gmail = "https://mail.google.com/mail/?" + q({ view: "cm", fs: "1", to: inv.email, su: subject, body });
+  const outlook = "https://outlook.live.com/mail/0/deeplink/compose?" + q({ to: inv.email, subject, body });
+  const mailto = `mailto:${inv.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const copy = async (text, ok) => {
+    try { await navigator.clipboard.writeText(text); toast(ok); } catch { toast("Couldn't copy automatically. Select the link and copy it."); }
+  };
+  const cls = "btn small" + (primary ? " primary" : "");
+  return (
+    <div className="row" style={{ gap: 6 }}>
+      <a className={cls} href={gmail} target="_blank" rel="noopener">Send with Gmail</a>
+      <a className="btn small" href={outlook} target="_blank" rel="noopener">Send with Outlook</a>
+      <button className="btn small" type="button" onClick={() => copy(`${subject}\n\n${body}`, "Invite message copied. Paste it into any email or chat.")}>Copy message</button>
+      <button className="btn small" type="button" onClick={() => copy(inviteLink(inv.token), "Invite link copied.")}>Copy link only</button>
+      <a className="linkbtn" href={mailto}>Use my computer's mail app</a>
+    </div>
+  );
+}
+
 function Invites() {
   const P = useP();
   const { d, pid, me, run, act, toast } = P;
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Researcher");
   const [last, setLast] = useState(null);
+  const [open, setOpen] = useState(null);
   const submit = async (e) => {
     e.preventDefault();
     const em = email.trim().toLowerCase();
@@ -22,39 +52,48 @@ function Invites() {
     act(`invited ${em} as a ${role}`);
     setLast(res); setEmail("");
   };
-  const copy = async (inv) => {
-    try { await navigator.clipboard.writeText(inviteLink(inv.token)); toast("Invite link copied."); } catch { toast("Copy the link from the box."); }
+  const cancel = async (inv) => {
+    if (await run(supabase.from("invites").delete().eq("id", inv.id), ["invites"], "Invite cancelled. Its link no longer works.")) {
+      act(`cancelled the invite for ${inv.email}`);
+      if (last && last.id === inv.id) setLast(null);
+    }
   };
-  const mail = (inv) => `mailto:${inv.email}?subject=${encodeURIComponent(`Join "${d.project.title || "our project"}" on ResearchOS`)}&body=${encodeURIComponent(`I've added you to our research project on ResearchOS as a ${inv.role}.\n\nOpen this link and sign in with ${inv.email} to join:\n${inviteLink(inv.token)}\n\nThe link works for 14 days.`)}`;
   return (
     <section style={{ display: "grid", gap: 12 }}>
       <h3>Invite a teammate</h3>
       <form className="grid" onSubmit={submit}>
         <div className="field"><label className="label" htmlFor="i-email">Email</label><input id="i-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@university.edu" /></div>
         <div className="field"><label className="label" htmlFor="i-role">Role</label><select id="i-role" value={role} onChange={(e) => setRole(e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
-        <div className="row field wide"><button className="btn primary" type="submit">Create invite</button><span className="ms-sub">They sign in with that email to join. Links last 14 days.</span></div>
+        <div className="row field wide"><button className="btn primary" type="submit">Create invite</button><span className="ms-sub">ResearchOS makes a private link; you send it. They join by signing in with that email. Links last 14 days.</span></div>
       </form>
-      {last ? (
+      {last && d.invites.some((x) => x.id === last.id) ? (
         <div className="diag">
-          <span className="label">Invite for {last.email}</span>
-          <div className="copybox"><input readOnly value={inviteLink(last.token)} aria-label="Invite link" onFocus={(e) => e.target.select()} /><button className="btn small" type="button" onClick={() => copy(last)}>Copy</button></div>
-          <div className="row"><a className="btn small primary" href={mail(last)}>Email it from your mail app</a></div>
+          <span className="label">Invite ready for {last.email}</span>
+          <p style={{ fontSize: ".9rem" }}>Send it now. Gmail and Outlook open a ready-written email in a new tab.</p>
+          <SendInvite inv={last} primary />
+          <div className="copybox"><input readOnly value={inviteLink(last.token)} aria-label="Invite link" onFocus={(e) => e.target.select()} /></div>
         </div>
       ) : null}
       {d.invites.length ? (
         <div>
           <span className="label">Waiting to join · {d.invites.length}</span>
-          {d.invites.map((inv) => (
-            <div className="member" key={inv.id} style={{ gridTemplateColumns: "minmax(0,1fr) auto" }}>
-              <div style={{ minWidth: 0 }}><strong style={{ overflowWrap: "anywhere" }}>{inv.email}</strong>
-                <div className="sub2">{inv.role} · {Date.parse(inv.expires_at) < Date.now() ? "expired" : "sent " + ago(inv.created_at)}</div></div>
-              <div className="row" style={{ gap: 6 }}>
-                <button className="linkbtn" type="button" onClick={() => copy(inv)}>Copy link</button>
-                <a className="linkbtn" href={mail(inv)}>Email</a>
-                <button className="linkbtn" type="button" onClick={() => run(supabase.from("invites").delete().eq("id", inv.id), ["invites"])}>Revoke</button>
+          <p className="ms-sub">Invites that haven't been accepted yet. Send one again, or cancel it so its link stops working.</p>
+          {d.invites.map((inv) => {
+            const expired = Date.parse(inv.expires_at) < Date.now();
+            return (
+              <div className="member" key={inv.id} style={{ gridTemplateColumns: "minmax(0,1fr)" }}>
+                <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ minWidth: 0 }}><strong style={{ overflowWrap: "anywhere" }}>{inv.email}</strong>
+                    <div className="sub2">{inv.role} · {expired ? "expired, so create a new invite" : "invited " + ago(inv.created_at)}</div></div>
+                  <div className="row" style={{ gap: 6 }}>
+                    {!expired ? <button className="btn small" type="button" aria-expanded={open === inv.id} onClick={() => setOpen(open === inv.id ? null : inv.id)}>{open === inv.id ? "Hide" : "Send again"}</button> : null}
+                    <ConfirmButton className="btn small danger" confirm="Click again to cancel" onConfirm={() => cancel(inv)}>Cancel invite</ConfirmButton>
+                  </div>
+                </div>
+                {open === inv.id ? <SendInvite inv={inv} /> : null}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </section>
