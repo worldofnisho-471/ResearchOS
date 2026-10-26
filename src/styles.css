@@ -383,3 +383,7 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 3px; padding
 @keyframes pulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .step .working { animation: none; } }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+.pub-forms { display: grid; gap: 12px; margin-bottom: 14px; }
+.pub-form { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; margin: 0; position: relative; display: grid; gap: 8px; min-width: 0; }
+.pub-form legend { padding: 0 6px; }
+.pub-remove { position: absolute; top: -2px; right: 12px; background: var(--surface); padding: 0 6px; }

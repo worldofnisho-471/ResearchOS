@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useP } from "../lib/project.jsx";
 import { ai, supabase } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
-import { ago, linkFor, ROLE_INFO, ROLES, TAB_NAMES } from "../lib/util.js";
+import { ago, linkFor, linkKey, ROLE_INFO, ROLES, TAB_NAMES, titleKey } from "../lib/util.js";
 import { Avatar, ConfirmButton, useBusy } from "../components/ui.jsx";
 
 const inviteLink = (token) => `${window.location.origin}${window.location.pathname}#/invite/${token}`;
@@ -104,7 +104,10 @@ function Publications() {
   const P = useP();
   const { d, pid, me, canEdit, run, act, name, reload, profiles } = P;
   const { isBusy, run: runAi, Status } = useBusy();
-  const [f, setF] = useState({ title: "", year: "", link: "", abstract: "" });
+  const blank = () => ({ title: "", year: "", link: "", abstract: "" });
+  const [rows, setRows] = useState([blank()]);
+  const [errs, setErrs] = useState([]);
+  const setRow = (i, k) => (e) => { const v = e.target.value; setRows((r) => r.map((x, j) => (j === i ? { ...x, [k]: v } : x))); setErrs([]); };
   const [result, setResult] = useState("");
   const withOrcid = d.members.filter((m) => profiles[m.user_id]?.orcid).length;
   const myOrcid = profiles[me]?.orcid;
@@ -117,9 +120,29 @@ function Publications() {
   };
   const add = async (e) => {
     e.preventDefault();
-    if (!f.title.trim()) return;
-    if (await run(supabase.from("publications").insert({ project_id: pid, member_id: me, title: f.title.trim(), year: Number(f.year) || null, doi_or_url: linkFor(f.link) || f.link.trim(), abstract: f.abstract.trim(), source: "manual" }), ["publications"])) {
-      act(`added the publication "${f.title.trim()}"`); setF({ title: "", year: "", link: "", abstract: "" });
+    const filled = rows.map((r, i) => ({ ...r, i })).filter((r) => r.title.trim() || r.link.trim() || r.year || r.abstract.trim());
+    const errors = [];
+    if (!filled.length) errors[0] = "Add at least one title.";
+    // Already in the list (from ORCID or added before), matched by title or DOI/link
+    const haveTitle = new Map(d.publications.map((p) => [titleKey(p.title), p.title]));
+    const haveLink = new Map(d.publications.filter((p) => linkKey(p.doi_or_url)).map((p) => [linkKey(p.doi_or_url), p.title]));
+    const seenTitle = new Map(), seenLink = new Map();
+    for (const r of filled) {
+      const tk = titleKey(r.title), lk = linkKey(r.link), y = Number(r.year);
+      if (!r.title.trim()) errors[r.i] = "Add a title.";
+      else if (r.link.trim() && !linkFor(r.link)) errors[r.i] = "That isn't a DOI or link. Leave it blank, or paste something like 10.1021/… or https://…";
+      else if (r.year && (!Number.isInteger(y) || y < 1900 || y > new Date().getFullYear() + 1)) errors[r.i] = "Check the year.";
+      else if (haveTitle.has(tk)) errors[r.i] = `Already in the list: "${haveTitle.get(tk)}".`;
+      else if (lk && haveLink.has(lk)) errors[r.i] = `This DOI or link is already in the list, as "${haveLink.get(lk)}".`;
+      else if (seenTitle.has(tk)) errors[r.i] = `Same title as publication ${seenTitle.get(tk) + 1} above.`;
+      else if (lk && seenLink.has(lk)) errors[r.i] = `Same DOI or link as publication ${seenLink.get(lk) + 1} above.`;
+      seenTitle.set(tk, r.i); if (lk) seenLink.set(lk, r.i);
+    }
+    if (errors.some(Boolean)) { setErrs(errors); return; }
+    const insert = filled.map((r) => ({ project_id: pid, member_id: me, title: r.title.trim(), year: Number(r.year) || null, doi_or_url: linkFor(r.link) || "", abstract: r.abstract.trim(), source: "manual" }));
+    if (await run(supabase.from("publications").insert(insert), ["publications"], `Added ${insert.length} publication${insert.length === 1 ? "" : "s"}.`)) {
+      act(insert.length === 1 ? `added the publication "${insert[0].title}"` : `added ${insert.length} publications`);
+      setRows([blank()]); setErrs([]);
     }
   };
   const list = d.publications.slice().sort((a, b) => (b.year || 0) - (a.year || 0));
@@ -152,12 +175,27 @@ function Publications() {
       {canEdit ? (
         <details className="pub-add">
           <summary>Add publications by hand</summary>
-          <form className="grid" onSubmit={add}>
-            <div className="field wide"><label className="label" htmlFor="cp-title">Title</label><input id="cp-title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Paper, thesis, patent or report title" /></div>
-            <div className="field"><label className="label" htmlFor="cp-year">Year</label><input id="cp-year" type="number" min="1950" max="2100" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} /></div>
-            <div className="field"><label className="label" htmlFor="cp-link">Link (DOI or URL)</label><input id="cp-link" value={f.link} onChange={(e) => setF({ ...f, link: e.target.value })} /></div>
-            <div className="field wide"><label className="label" htmlFor="cp-abs">Abstract or 2-line summary</label><textarea id="cp-abs" style={{ minHeight: 70 }} value={f.abstract} onChange={(e) => setF({ ...f, abstract: e.target.value })} /></div>
-            <div className="row field wide"><button className="btn small primary" type="submit">Add publication</button></div>
+          <form className="pub-forms" onSubmit={add}>
+            {rows.map((r, i) => {
+              const id = (k) => (i ? `${k}-${i}` : k);
+              return (
+                <fieldset className="pub-form" key={i}>
+                  <legend className="label">Publication {i + 1}</legend>
+                  {rows.length > 1 ? <button className="linkbtn pub-remove" type="button" aria-label={`Remove publication ${i + 1}`} onClick={() => { setRows((x) => x.filter((_, j) => j !== i)); setErrs([]); }}>Remove</button> : null}
+                  <div className="grid">
+                    <div className="field wide"><label className="label" htmlFor={id("cp-title")}>Title</label><input id={id("cp-title")} value={r.title} onChange={setRow(i, "title")} placeholder="Paper, thesis, patent or report title" /></div>
+                    <div className="field"><label className="label" htmlFor={id("cp-year")}>Year (optional)</label><input id={id("cp-year")} type="number" min="1900" max="2100" value={r.year} onChange={setRow(i, "year")} /></div>
+                    <div className="field"><label className="label" htmlFor={id("cp-link")}>DOI or link (optional)</label><input id={id("cp-link")} value={r.link} onChange={setRow(i, "link")} placeholder="10.1021/… or https://…" /></div>
+                    <div className="field wide"><label className="label" htmlFor={id("cp-abs")}>Abstract or 2-line summary (optional)</label><textarea id={id("cp-abs")} style={{ minHeight: 70 }} value={r.abstract} onChange={setRow(i, "abstract")} /></div>
+                  </div>
+                  {errs[i] ? <p className="status err" role="alert">{errs[i]}</p> : null}
+                </fieldset>
+              );
+            })}
+            <div className="row">
+              <button className="btn small" type="button" onClick={() => setRows((x) => [...x, blank()])} aria-label="Add another publication">+ Add another</button>
+              <button className="btn small primary" type="submit">{rows.length > 1 ? `Save ${rows.length} publications` : "Add publication"}</button>
+            </div>
           </form>
         </details>
       ) : null}

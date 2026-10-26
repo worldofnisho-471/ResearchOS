@@ -355,14 +355,21 @@ async function importWorks(sb: SupabaseClient, uid: string, b: any) {
   const { data: profiles } = await sb.from("profiles").select("id, orcid").in("id", (members ?? []).map((m: any) => m.user_id));
   const withOrcid = (profiles ?? []).filter((p: any) => p.orcid);
   const { data: existing } = await sb.from("publications").select("title, doi_or_url").eq("project_id", b.projectId);
-  const seen = new Set((existing ?? []).flatMap((e: any) => [String(e.title).toLowerCase().trim(), String(e.doi_or_url).toLowerCase()]).filter(Boolean));
+  // Same publication = same title (ignoring case and punctuation) or same DOI/link.
+  const tKey = (t: string) => String(t || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const lKey = (u: string) => {
+    const v = String(u || "").trim(); if (!v) return "";
+    const doi = v.match(/(10\.\d{4,9}\/\S+)$/i);
+    return doi ? "doi:" + decodeURIComponent(doi[1]).toLowerCase() : v.toLowerCase().replace(/\/+$/, "");
+  };
+  const seen = new Set((existing ?? []).flatMap((e: any) => [tKey(e.title), lKey(e.doi_or_url)]).filter(Boolean));
   let added = 0;
   for (const p of withOrcid) {
     let works = await openalexWorksByOrcid(p.orcid);
     if (!works.length) works = await orcidPublicWorks(p.orcid);
     const fresh = works.filter((w: any) => {
-      const k1 = w.title.toLowerCase().trim(), k2 = String(w.doi_or_url).toLowerCase();
-      if (seen.has(k1) || (k2 && seen.has(k2))) return false;
+      const k1 = tKey(w.title), k2 = lKey(w.doi_or_url);
+      if (!k1 || seen.has(k1) || (k2 && seen.has(k2))) return false;
       seen.add(k1); if (k2) seen.add(k2); return true;
     });
     if (fresh.length) {

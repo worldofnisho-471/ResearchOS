@@ -75,3 +75,12 @@ export function linkFor(s) {
   if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v)) return "https://" + v;
   return null;
 }
+
+/** Keys used to spot the same publication twice: its title ignoring case and punctuation, and its DOI or link. */
+export const titleKey = (t) => String(t || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+export function linkKey(s) {
+  const u = linkFor(s);
+  if (!u) return "";
+  const doi = u.match(/doi\.org\/(10\.\S+)$/i);
+  return doi ? "doi:" + decodeURIComponent(doi[1]).toLowerCase() : u.toLowerCase().replace(/\/+$/, "");
+}
