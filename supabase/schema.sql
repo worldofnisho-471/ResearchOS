@@ -455,10 +455,156 @@ do $$ declare t text; begin
   end loop;
 end $$;
 
+-- ---------- Notifications for the person a task is assigned to ----------
+-- Made by the database itself whenever a task, its result, a linked note, a comment or a mention changes,
+-- so every path (board, edit window, results, notes, AI review approvals) notifies, and nobody can skip it.
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  project_id uuid not null references public.projects (id) on delete cascade,
+  task_id uuid references public.tasks (id) on delete cascade,
+  actor_id uuid references auth.users (id) on delete set null,
+  kind text not null check (kind in ('mention', 'assigned', 'unassigned', 'updated', 'comment')),
+  summary text not null default '',
+  comment_id uuid references public.comments (id) on delete cascade,
+  read_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists notifications_user_idx on public.notifications (user_id, read_at, updated_at desc);
+alter table public.notifications enable row level security;
+drop policy if exists notifications_read on public.notifications;
+create policy notifications_read on public.notifications for select using (user_id = auth.uid());
+drop policy if exists notifications_mark on public.notifications;
+create policy notifications_mark on public.notifications for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- Adds a notification; repeated changes to the same task by the same person within 10 minutes
+-- are merged into one unread notification ("moved to Running; changed the due date").
+create or replace function public.notify(recipient uuid, p uuid, t uuid, what text, msg text, cmt uuid default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare actor uuid := auth.uid(); n public.notifications;
+begin
+  if recipient is null or msg is null or msg = '' or recipient = actor then return; end if;
+  if not exists (select 1 from project_members where project_id = p and user_id = recipient) then return; end if;
+  if what = 'updated' then
+    select * into n from notifications
+      where user_id = recipient and task_id = t and actor_id is not distinct from actor and kind = 'updated'
+        and read_at is null and updated_at > now() - interval '10 minutes'
+      order by updated_at desc limit 1;
+    if found then
+      if position(msg in n.summary) = 0 then
+        update notifications set summary = left(n.summary || '; ' || msg, 400), updated_at = now() where id = n.id;
+      else
+        update notifications set updated_at = now() where id = n.id;
+      end if;
+      return;
+    end if;
+  end if;
+  insert into notifications (user_id, project_id, task_id, actor_id, kind, summary, comment_id)
+  values (recipient, p, t, actor, what, left(msg, 400), cmt);
+end $$;
+
+create or replace function public.notify_task_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare changes text[] := '{}'; who text; prefix text := '';
+begin
+  if tg_op = 'INSERT' then
+    perform notify(new.assignee_id, new.project_id, new.id, 'assigned', 'added this task and assigned it to you');
+    return new;
+  end if;
+  -- Owner changed
+  if new.assignee_id is distinct from old.assignee_id then
+    perform notify(new.assignee_id, new.project_id, new.id, 'assigned', 'assigned this task to you');
+    select display_name into who from profiles where id = new.assignee_id;
+    perform notify(old.assignee_id, old.project_id, old.id, 'unassigned',
+      case when new.assignee_id is null then 'unassigned you from this task' else 'reassigned this task to ' || coalesce(nullif(who, ''), 'someone else') end);
+  end if;
+  -- What changed on the card (for its current owner)
+  if new.status is distinct from old.status then
+    changes := changes || ('moved it to ' || new.status || case when new.status = 'Blocked' and new.blocker <> '' then ' (' || new.blocker || ')' else '' end);
+  elsif new.blocker is distinct from old.blocker and new.status = 'Blocked' and new.blocker <> '' then
+    changes := changes || ('updated the blocker: ' || new.blocker);
+  end if;
+  if new.title is distinct from old.title then changes := changes || ('renamed it from "' || old.title || '"'); end if;
+  if new.milestone is distinct from old.milestone then changes := changes || ('moved it to the milestone "' || new.milestone || '"'); end if;
+  if new.method is distinct from old.method then changes := changes || 'changed the method'::text; end if;
+  if new.success_criterion is distinct from old.success_criterion then changes := changes || 'changed the success criterion'::text; end if;
+  if new.est_days is distinct from old.est_days then changes := changes || ('changed the estimate to ' || new.est_days || ' days'); end if;
+  if new.due_date is distinct from old.due_date then
+    changes := changes || (case when new.due_date is null then 'removed the due date' else 'changed the due date to ' || to_char(new.due_date, 'FMDD Mon YYYY') end);
+  end if;
+  if new.changed_by_review and not old.changed_by_review then prefix := 'approved an AI review that '; end if;
+  if array_length(changes, 1) > 0 and new.assignee_id is not distinct from old.assignee_id then
+    perform notify(new.assignee_id, new.project_id, new.id, 'updated', prefix || array_to_string(changes, '; '));
+  end if;
+  return new;
+end $$;
+drop trigger if exists notify_task_change on public.tasks;
+create trigger notify_task_change after insert or update on public.tasks
+  for each row execute function public.notify_task_change();
+
+create or replace function public.notify_result()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare t public.tasks;
+begin
+  select * into t from tasks where id = new.task_id;
+  if tg_op = 'UPDATE' and new.outcome is not distinct from old.outcome and new.criterion_met is not distinct from old.criterion_met
+     and new.what_done is not distinct from old.what_done and new.notes is not distinct from old.notes then return new; end if;
+  perform notify(t.assignee_id, t.project_id, t.id, 'updated',
+    case when tg_op = 'INSERT' then 'logged a result' else 'updated the result' end || ': criterion ' ||
+    case new.criterion_met when 'Yes' then 'met' when 'Partly' then 'partly met' else 'missed' end);
+  return new;
+end $$;
+drop trigger if exists notify_result on public.results;
+create trigger notify_result after insert or update on public.results
+  for each row execute function public.notify_result();
+
+create or replace function public.notify_note()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare t public.tasks;
+begin
+  if new.task_id is null then return new; end if;
+  if tg_op = 'UPDATE' and new.task_id is not distinct from old.task_id and new.body is not distinct from old.body and new.title is not distinct from old.title then return new; end if;
+  select * into t from tasks where id = new.task_id;
+  perform notify(t.assignee_id, t.project_id, t.id, 'updated',
+    case when tg_op = 'INSERT' or new.task_id is distinct from old.task_id then 'linked the ' || lower(new.kind) || ' note "' || new.title || '"'
+         else 'edited the note "' || new.title || '"' end);
+  return new;
+end $$;
+drop trigger if exists notify_note on public.notes;
+create trigger notify_note after insert or update on public.notes
+  for each row execute function public.notify_note();
+
+create or replace function public.notify_comment()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare t public.tasks;
+begin
+  select * into t from tasks where id = new.task_id;
+  perform notify(t.assignee_id, t.project_id, t.id, 'comment', 'commented: ' || left(new.body, 140), new.id);
+  return new;
+end $$;
+drop trigger if exists notify_comment on public.comments;
+create trigger notify_comment after insert on public.comments
+  for each row execute function public.notify_comment();
+
+-- A mention is the stronger notification: it replaces the "commented" one for the same comment.
+create or replace function public.notify_mention()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare body text;
+begin
+  select c.body into body from comments c where c.id = new.comment_id;
+  delete from notifications where user_id = new.mentioned_user_id and comment_id = new.comment_id and kind = 'comment';
+  perform notify(new.mentioned_user_id, new.project_id, new.task_id, 'mention', 'mentioned you: ' || left(coalesce(body, ''), 140), new.comment_id);
+  return new;
+end $$;
+drop trigger if exists notify_mention on public.mentions;
+create trigger notify_mention after insert on public.mentions
+  for each row execute function public.notify_mention();
+
 -- ---------- Realtime ----------
 do $$ declare t text; begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log', 'ai_jobs', 'mentions'] loop
+    foreach t in array array['projects', 'project_members', 'tasks', 'results', 'notes', 'comments', 'reviews', 'evidence', 'publications', 'directions', 'econ', 'activity_log', 'ai_jobs', 'mentions', 'notifications'] loop
       if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;
@@ -543,3 +689,4 @@ end $$;
 grant execute on function public.accept_invite(uuid) to authenticated;
 grant execute on function public.invite_preview(uuid) to anon, authenticated;
 grant execute on function public.create_example_project() to authenticated;
+revoke execute on function public.notify(uuid, uuid, uuid, text, text, uuid) from public, anon, authenticated;

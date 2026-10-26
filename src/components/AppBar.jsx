@@ -5,45 +5,47 @@ import { ago } from "../lib/util.js";
 import { Avatar } from "./ui.jsx";
 import { useMyProfile } from "./TopBar.jsx";
 
-/** Mentions of you across all your projects: unread first, newest first. */
-function useMentions(me) {
+/** Your notifications across all projects: mentions, and changes to tasks assigned to you. Newest first. */
+function useNotifications(me) {
   const [items, setItems] = useState([]);
   const [problem, setProblem] = useState("");
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from("mentions").select("*").eq("mentioned_user_id", me).order("created_at", { ascending: false }).limit(20);
-    if (error) { console.warn("Mentions:", error.message); setProblem(error.message); return; }
+    const { data, error } = await supabase.from("notifications").select("*").eq("user_id", me).order("updated_at", { ascending: false }).limit(30);
+    if (error) { console.warn("Notifications:", error.message); setProblem(error.message); return; }
     setProblem("");
     const rows = data || [];
     if (!rows.length) { setItems([]); return; }
-    const ids = (k) => [...new Set(rows.map((r) => r[k]))];
-    const [{ data: tasks }, { data: projects }, { data: comments }, { data: people }] = await Promise.all([
+    const ids = (k) => [...new Set(rows.map((r) => r[k]).filter(Boolean))];
+    const [{ data: tasks }, { data: projects }, { data: people }] = await Promise.all([
       supabase.from("tasks").select("id, title").in("id", ids("task_id")),
       supabase.from("projects").select("id, title").in("id", ids("project_id")),
-      supabase.from("comments").select("id, body").in("id", ids("comment_id")),
-      supabase.from("profiles").select("id, display_name").in("id", ids("author_id")),
+      supabase.from("profiles").select("id, display_name").in("id", ids("actor_id")),
     ]);
     const by = (list) => Object.fromEntries((list || []).map((x) => [x.id, x]));
-    const T = by(tasks), Pj = by(projects), C = by(comments), Pe = by(people);
+    const T = by(tasks), Pj = by(projects), Pe = by(people);
     setItems(rows.map((r) => ({ ...r, task: T[r.task_id]?.title || "a task", project: Pj[r.project_id]?.title || "a project",
-      body: C[r.comment_id]?.body || "", author: Pe[r.author_id]?.display_name || "A teammate" })));
+      actor: Pe[r.actor_id]?.display_name || "A teammate" })));
   }, [me]);
   useEffect(() => {
     load();
     const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 20000);
     window.addEventListener("focus", load);
-    // A teammate who mentions you also pings this channel, so the badge updates at once.
+    window.addEventListener("ros-activity", load);  // a teammate changed something in the project you have open
+    // Someone who mentions you also pings this channel, so the badge updates at once.
     const ch = supabase.channel("user:" + me);
     ch.on("broadcast", { event: "mention" }, () => load()).subscribe();
-    return () => { clearInterval(t); window.removeEventListener("focus", load); supabase.removeChannel(ch); };
+    return () => { clearInterval(t); window.removeEventListener("focus", load); window.removeEventListener("ros-activity", load); supabase.removeChannel(ch); };
   }, [me, load]);
   return { items, load, problem };
 }
+
+const KIND_LABEL = { mention: "Mention", assigned: "Assigned to you", unassigned: "Reassigned", updated: "Update", comment: "Comment" };
 
 export default function AppBar({ session }) {
   const me = session.user.id;
   const profile = useMyProfile(session);
   const name = (profile && profile.display_name) || session.user.email;
-  const { items, load, problem } = useMentions(me);
+  const { items, load, problem } = useNotifications(me);
   const unread = items.filter((m) => !m.read_at);
   const [open, setOpen] = useState(false);
   const box = useRef(null);
@@ -58,13 +60,13 @@ export default function AppBar({ session }) {
 
   const markRead = async (ids) => {
     if (!ids.length) return;
-    await supabase.from("mentions").update({ read_at: new Date().toISOString() }).in("id", ids);
+    await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
     load();
   };
   const openMention = async (m) => {
     setOpen(false);
     if (!m.read_at) await markRead([m.id]);
-    go(`p/${m.project_id}/plan/${m.task_id}`);
+    if (m.task_id) go(`p/${m.project_id}/plan/${m.task_id}`); else go(`p/${m.project_id}`);
   };
   const logOut = async () => { await supabase.auth.signOut(); go(""); };
 
@@ -74,32 +76,32 @@ export default function AppBar({ session }) {
       <div className="appbar-right">
         <div className="mentions" ref={box}>
           <button className={"appbar-btn" + (unread.length ? " has" : "")} type="button" aria-expanded={open} aria-haspopup="dialog"
-            aria-label={unread.length ? `${unread.length} unread mention${unread.length === 1 ? "" : "s"}` : "Mentions"} onClick={() => setOpen(!open)}>
-            <span aria-hidden="true">@</span>{unread.length ? <b className="badge">{unread.length}</b> : null}
+            aria-label={unread.length ? `${unread.length} unread notification${unread.length === 1 ? "" : "s"}` : "Notifications"} title="Notifications" onClick={() => setOpen(!open)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>{unread.length ? <b className="badge">{unread.length}</b> : null}
           </button>
           {open ? (
-            <div className="mention-pop" role="dialog" aria-label="Mentions">
+            <div className="mention-pop" role="dialog" aria-label="Notifications">
               <div className="mention-pop-head">
-                <strong>Mentions</strong>
+                <strong>Notifications</strong>
                 {unread.length ? <button className="linkbtn" type="button" onClick={() => markRead(unread.map((m) => m.id))}>Mark all read</button> : null}
               </div>
-              {problem ? <p className="status err" style={{ padding: "10px 14px" }}>Mentions aren't available: {/does not exist|relation|schema cache/i.test(problem) ? "the mentions table is missing. Re-run schema.sql in Supabase." : problem}</p> : null}
+              {problem ? <p className="status err" style={{ padding: "10px 14px" }}>Notifications aren't available: {/does not exist|relation|schema cache/i.test(problem) ? "the notifications table is missing. Re-run schema.sql in Supabase." : problem}</p> : null}
               {items.length ? (
                 <ul>
                   {items.map((m) => (
                     <li key={m.id}>
                       <button type="button" className={"mention-item" + (m.read_at ? "" : " unread")} onClick={() => openMention(m)}>
-                        <Avatar id={m.author_id} name={m.author} size="sm" />
+                        <Avatar id={m.actor_id} name={m.actor} size="sm" />
                         <span>
-                          <span><b>{m.author}</b> mentioned you on <b>{m.task}</b></span>
-                          <span className="ms-sub">{m.project} · {ago(m.created_at)}</span>
-                          {m.body ? <span className="mention-snip">{m.body.length > 110 ? m.body.slice(0, 110) + "…" : m.body}</span> : null}
+                          <span className="tag">{KIND_LABEL[m.kind] || "Update"}</span>
+                          <span><b>{m.actor}</b> {m.summary}</span>
+                          <span className="ms-sub">on <b>{m.task}</b> · {m.project} · {ago(m.updated_at)}</span>
                         </span>
                       </button>
                     </li>
                   ))}
                 </ul>
-              ) : <p className="muted" style={{ padding: "10px 14px", fontSize: ".9rem" }}>No mentions yet. When a teammate types @ and your name in a comment, it shows up here.</p>}
+              ) : <p className="muted" style={{ padding: "10px 14px", fontSize: ".9rem" }}>Nothing yet. You'll hear here when someone mentions you, or changes, comments on or logs a result for a task assigned to you.</p>}
             </div>
           ) : null}
         </div>

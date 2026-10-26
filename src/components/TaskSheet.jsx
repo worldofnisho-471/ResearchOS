@@ -23,8 +23,21 @@ export default function TaskSheet({ task, focus, onClose }) {
   const isNew = task === "new";
   const t = isNew ? null : d.tasks.find((x) => x.id === task.id) || task;
   const ms = allMilestones(d.project, d.tasks);
-  const [v, setV] = useState(() => t ? { ...t, due_date: t.due_date || "", assignee_id: t.assignee_id || "" }
+  const form = (x) => ({ title: x.title, milestone: x.milestone, method: x.method || "", success_criterion: x.success_criterion || "", est_days: x.est_days,
+    status: x.status, blocker: x.blocker || "", assignee_id: x.assignee_id || "", due_date: x.due_date || "" });
+  const [v, setV] = useState(() => t ? form(t)
     : { title: "", milestone: ms[0] || "", method: "", success_criterion: "", est_days: 3, status: "To do", blocker: "", assignee_id: "", due_date: "" });
+  // What the task looked like when you opened it: only the fields you change are saved,
+  // and fields you haven't touched follow a teammate's live edits.
+  const [orig, setOrig] = useState(() => (t ? form(t) : null));
+  useEffect(() => {
+    if (!t || !orig) return;
+    const live = form(t);
+    const keys = Object.keys(live).filter((k) => String(live[k]) !== String(orig[k]));
+    if (!keys.length) return;
+    setV((x) => { const n = { ...x }; keys.forEach((k) => { if (String(x[k]) === String(orig[k])) n[k] = live[k]; }); return n; });
+    setOrig(live);
+  }, [t && t.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
   const [msg, setMsg] = useState("");
   const [newMs, setNewMs] = useState(() => !ms.length);
   const msOptions = v.milestone && !ms.includes(v.milestone) && !newMs ? [...ms, v.milestone] : ms;
@@ -56,10 +69,15 @@ export default function TaskSheet({ task, focus, onClose }) {
       if (!ok) return;
       act(`added the task "${data.title}"`);
     } else {
-      const ok = await run(supabase.from("tasks").update(data).eq("id", t.id), ["tasks"]);
+      const clean = (x) => ({ title: x.title.trim(), milestone: (x.milestone || "").trim() || "General", method: (x.method || "").trim(), success_criterion: (x.success_criterion || "").trim(),
+        est_days: Math.max(1, Math.round(Number(x.est_days) || 1)), status: x.status, blocker: (x.blocker || "").trim(), assignee_id: x.assignee_id || null, due_date: x.due_date || null });
+      const before = clean(orig), after = clean(v);
+      const changed = Object.fromEntries(Object.keys(after).filter((k) => String(after[k]) !== String(before[k])).map((k) => [k, after[k]]));
+      if (!Object.keys(changed).length) { onClose(); return; }
+      const ok = await run(supabase.from("tasks").update({ ...changed, updated_by: me }).eq("id", t.id), ["tasks"]);
       if (!ok) return;
-      if (data.status !== t.status) act(`moved "${data.title}" to ${data.status}`, t.id);
-      else if (data.assignee_id !== (t.assignee_id || null)) act(!data.assignee_id ? `unassigned "${data.title}"` : data.assignee_id === me ? `took on "${data.title}"` : `assigned "${data.title}" to ${name(data.assignee_id)}`, t.id);
+      if ("status" in changed) act(`moved "${data.title}" to ${data.status}`, t.id);
+      else if ("assignee_id" in changed) act(!data.assignee_id ? `unassigned "${data.title}"` : data.assignee_id === me ? `took on "${data.title}"` : `assigned "${data.title}" to ${name(data.assignee_id)}`, t.id);
       else act(`edited "${data.title}"`, t.id);
     }
     onClose();

@@ -113,6 +113,8 @@ export function ProjectProvider({ pid, session, tab, children }) {
     // Teammates' changes, sent browser to browser (works even if database change events are off)
     ch.on("broadcast", { event: "changed" }, ({ payload }) => {
       (payload?.keys || []).forEach((k) => { if (LOADERS[k]) soon(k); });
+      // A teammate's change may have created a notification for you: let the top bar re-check.
+      if ((payload?.keys || []).some((k) => ["tasks", "results", "notes", "comments"].includes(k))) setTimeout(() => window.dispatchEvent(new Event("ros-activity")), 600);
       if ((payload?.keys || []).includes("ai_jobs")) checkJobs();
     });
     ch.on("presence", { event: "sync" }, () => {
