@@ -26,7 +26,7 @@ function Spark({ rows, label }) {
 
 export default function Directions() {
   const P = useP();
-  const { d, pid, me, canEdit, reload, directions: dir, name, toast } = P;
+  const { d, pid, me, isLead, reload, directions: dir, name, toast } = P;
   const p = d.project;
   const low = p.viability_score != null && (clamp(p.viability_score) < DIR_THRESHOLD || p.verdict === "Rethink");
   const [open, setOpen] = useState(false);
@@ -76,7 +76,7 @@ export default function Directions() {
             Each is ranked on fit, research and funding momentum (OpenAlex, NIH RePORTER), commercial pull (web search with sources), room to contribute and feasibility.
           </p>
         </div>
-        {canEdit ? <div className="row"><button className={"btn small" + (dir ? "" : " primary")} type="button" disabled={isBusy("dirs")} onClick={suggest}>{dir ? "Suggest again" : "Suggest related directions"}</button></div> : null}
+        {isLead ? <div className="row"><button className={"btn small" + (dir ? "" : " primary")} type="button" disabled={isBusy("dirs")} onClick={suggest}>{dir ? "Suggest again" : "Suggest related directions"}</button></div> : null}
       </div>
       <Status k="dirs" text="Importing ORCID publications, checking paper and funding trends, and searching market signals… this can take a minute or two." />
       <p className="ms-sub">
@@ -85,11 +85,11 @@ export default function Directions() {
       </p>
 
       {!dir ? (
-        <div className="empty"><p>{canEdit ? (low ? "Suggestions start automatically after a low score. If they didn't, run them here." : "No suggestions yet.") : "No suggestions yet. A Researcher or Lead can generate them."}</p></div>
+        <div className="empty"><p>{isLead ? (low ? "Suggestions start automatically after a low score. If they didn't, run them here." : "No suggestions yet.") : "No suggestions yet. A Lead can generate them."}</p></div>
       ) : (
         <>
           {dir.expertise_summary ? <div className="diag"><span className="label">What your publications show</span><p>{dir.expertise_summary}</p></div> : null}
-          <p className="ms-sub">Suggested by {name(dir.run_by)} {ago(dir.created_at)} from {dir.based_on_count} publications.</p>
+          <p className="ms-sub">Suggested by {name(dir.run_by)} {ago(dir.created_at)} from {dir.based_on_count} publications.{isLead ? "" : " A Lead can refresh these suggestions or start one as a new project."}</p>
           <div className="dir-grid">
             {(dir.suggestions || []).map((s, k) => (
               <article className="dir" key={k}>
@@ -117,7 +117,7 @@ export default function Directions() {
                 ) : null}
                 {s.first_experiment ? <p className="ev-rec"><span className="label">Cheapest first test</span><span>{s.first_experiment}</span></p> : null}
                 {s.risk ? <p className="ms-sub">Risk: {s.risk}</p> : null}
-                {canEdit ? <div><button className="btn small primary" type="button" onClick={(e) => { e.currentTarget.disabled = true; startFrom(s); }}>Start as a new project</button></div> : null}
+                {isLead ? <div><button className="btn small primary" type="button" onClick={(e) => { e.currentTarget.disabled = true; startFrom(s); }}>Start as a new project</button></div> : null}
               </article>
             ))}
           </div>

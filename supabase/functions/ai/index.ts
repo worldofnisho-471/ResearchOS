@@ -424,7 +424,7 @@ async function importWorks(sb: SupabaseClient, uid: string, b: any) {
 // Related directions run in three phases. Each phase is its own function call with its own time limit,
 // and hands its results to the next phase, so the whole thing is never cut off by the ~150 s limit.
 async function directions(sb: SupabaseClient, uid: string, b: any) {
-  need(await roleOf(sb, b.projectId, uid), ["Lead", "Researcher"], "suggest related directions");
+  need(await roleOf(sb, b.projectId, uid), ["Lead"], "suggest related directions");
   const phase = Number(b.phase) || 1;
   const { data: p } = await sb.from("projects").select("*").eq("id", b.projectId).single();
   if (!p?.assessment) throw new HttpError(400, "Run the idea check first.");

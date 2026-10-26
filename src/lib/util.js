@@ -4,8 +4,8 @@ export const ROLES = ["Lead", "Researcher", "Observer"];
 export const GOALS = ["Academic paper", "Product", "Grant proposal"];
 export const DIR_THRESHOLD = 50;
 export const ROLE_INFO = {
-  Lead: "Everything: run the idea check, generate the plan, approve AI changes, invite people and set roles, delete the project.",
-  Researcher: "Add, edit, move and assign tasks; log results; write notes; record evidence; run AI reviews and related directions. AI changes wait for a Lead.",
+  Lead: "Everything: run the idea check, generate the plan, suggest related directions and start one as a new project, approve AI changes, invite people and set roles, delete the project.",
+  Researcher: "Add, edit, move and assign tasks; log results; write notes; record evidence; run AI reviews; import ORCID publications. AI changes wait for a Lead.",
   Observer: "Read everything and comment on tasks. Can't change the plan, results or notes.",
 };
 export const TAB_NAMES = { idea: "Idea check", plan: "Research plan", results: "Log results", dash: "Dashboard", next: "Next steps", notes: "Notes", team: "Team" };

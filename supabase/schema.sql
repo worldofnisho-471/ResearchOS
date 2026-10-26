@@ -382,6 +382,10 @@ end $$;
 drop policy if exists papers_write on public.papers;
 create policy papers_write on public.papers for all using (public.is_lead(project_id)) with check (public.is_lead(project_id));
 
+-- Related directions are suggested (and refreshed) by a Lead only
+drop policy if exists directions_write on public.directions;
+create policy directions_write on public.directions for all using (public.is_lead(project_id)) with check (public.is_lead(project_id));
+
 drop policy if exists reviews_read on public.reviews;
 create policy reviews_read on public.reviews for select using (public.is_member(project_id));
 drop policy if exists reviews_insert on public.reviews;
