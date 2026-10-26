@@ -41,7 +41,8 @@ export default function Directions() {
   const startFrom = async (s) => {
     const { data, error } = await supabase.from("projects").insert({
       title: s.title, idea_text: [s.pitch, s.first_experiment ? "First experiment: " + s.first_experiment : ""].filter(Boolean).join(" "),
-      field: p.field, goal: p.goal, from_project: pid, created_by: me,
+      // A new direction starts fresh: its own field (as suggested), and the default goal for you to set.
+      field: s.field || "", goal: "Academic paper", from_project: pid, created_by: me,
     }).select().single();
     if (error) { toast(error.message); return; }
     if (d.publications.length) {
@@ -94,6 +95,7 @@ export default function Directions() {
               <article className="dir" key={k}>
                 <div className="dir-top"><span className="label">#{k + 1}</span><span className="dir-score"><strong>{clamp(s.overall)}</strong><span className="ms-sub">/100</span></span></div>
                 <h3>{s.title}</h3>
+                {s.field ? <span className="label">Field: {s.field}</span> : null}
                 <p>{s.pitch}</p>
                 <div className="subbars">
                   {SUBS.map(([key, label]) => (

@@ -446,8 +446,8 @@ Why it scored as it did: ${p.assessment.summary ?? ""} Challenges: ${(p.assessme
 The team's publications:
 ${pubList || "(none listed: infer expertise from the idea only and keep fit conservative)"}
 Propose 5 related or adjacent research directions that build on the team's topics and methods and avoid what sank the idea.
-Return JSON: {"expertise_summary":"2 sentences on what the publications show the team is good at","candidates":[{"title":"short","phrase":"3-6 word search phrase for the field"}]}`);
-    const cands = (c.candidates ?? []).filter((x: any) => x?.title && x?.phrase).slice(0, 5).map((x: any) => ({ title: String(x.title), phrase: String(x.phrase) }));
+Return JSON: {"expertise_summary":"2 sentences on what the publications show the team is good at","candidates":[{"title":"short","phrase":"3-6 word search phrase for the field","field":"the research field this direction belongs to, 1-4 words"}]}`);
+    const cands = (c.candidates ?? []).filter((x: any) => x?.title && x?.phrase).slice(0, 5).map((x: any) => ({ title: String(x.title), phrase: String(x.phrase), field: String(x.field ?? "").slice(0, 80) }));
     if (!cands.length) throw new HttpError(502, "The AI returned no candidate directions. Try again.");
     return await nextPhase(b, { phase: 2, state: { expertise_summary: String(c.expertise_summary ?? ""), cands } }, "Checking paper trends, NIH funding and market signals…");
   }
@@ -466,7 +466,7 @@ Look for recent products, startups, investment or deals, patent activity, and an
 Return JSON: {"signals":[{"claim":"1 sentence","number":"the figure, if any","source_url":"https://..."}]}`, true).catch(() => ({ signals: [] })))),
     ]);
     const evidence = cands.map((x: any, i: number) => ({
-      title: x.title, phrase: x.phrase, papers_per_year: trends[i], nih_funding: funding[i],
+      title: x.title, phrase: x.phrase, field: x.field ?? "", papers_per_year: trends[i], nih_funding: funding[i],
       market: (market[i]?.signals ?? []).filter((g: any) => /^https?:\/\//.test(String(g.source_url ?? ""))).slice(0, 4),
     }));
     return await nextPhase(b, { phase: 3, state: { ...b.state, evidence } }, "Ranking the directions…");
@@ -489,7 +489,7 @@ Signals must be copied from the evidence (market items keep their source_url; fo
   const scored = await Promise.all(evidence.map((ev: any) => scoreOne(ev).catch(() => (remaining() > 45000 ? scoreOne(ev) : null)).catch(() => null)));
   const titles = new Set(pubs.map((x: any) => String(x.title).toLowerCase().trim()));
   const suggestions = scored.map((s: any, i: number) => s && ({
-    title: String(s.title || evidence[i].title), pitch: String(s.pitch ?? ""),
+    title: String(s.title || evidence[i].title), field: String(evidence[i].field ?? ""), pitch: String(s.pitch ?? ""),
     builds_on: (s.builds_on ?? []).filter((t: any) => titles.has(String(t).toLowerCase().trim())),
     scores: Object.fromEntries(["fit", "momentum", "commercial_pull", "room", "feasibility"].map((k) => [k, clamp(s.scores?.[k])])),
     overall: clamp(s.overall), reasons: (s.reasons ?? []).slice(0, 5).map(String),
