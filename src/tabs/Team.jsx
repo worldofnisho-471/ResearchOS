@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useP } from "../lib/project.jsx";
 import { ai, supabase } from "../lib/supabase.js";
 import { go } from "../lib/router.js";
-import { ago, isUrl, ROLE_INFO, ROLES, TAB_NAMES } from "../lib/util.js";
+import { ago, linkFor, ROLE_INFO, ROLES, TAB_NAMES } from "../lib/util.js";
 import { Avatar, ConfirmButton, useBusy } from "../components/ui.jsx";
 
 const inviteLink = (token) => `${window.location.origin}${window.location.pathname}#/invite/${token}`;
@@ -119,7 +119,7 @@ function Publications() {
   const add = async (e) => {
     e.preventDefault();
     if (!f.title.trim()) return;
-    if (await run(supabase.from("publications").insert({ project_id: pid, member_id: me, title: f.title.trim(), year: Number(f.year) || null, doi_or_url: f.link.trim(), abstract: f.abstract.trim(), source: "manual" }), ["publications"])) {
+    if (await run(supabase.from("publications").insert({ project_id: pid, member_id: me, title: f.title.trim(), year: Number(f.year) || null, doi_or_url: linkFor(f.link) || f.link.trim(), abstract: f.abstract.trim(), source: "manual" }), ["publications"])) {
       act(`added the publication "${f.title.trim()}"`); setF({ title: "", year: "", link: "", abstract: "" });
     }
   };
@@ -152,7 +152,8 @@ function Publications() {
               <strong>{p.title}</strong>
               <span className="ms-sub">{[p.year, p.source === "orcid" ? "from ORCID" : "added by hand", p.member_id ? name(p.member_id) : null].filter(Boolean).join(" · ")}{(p.topics || []).length ? " · " + p.topics.join(", ") : ""}</span>
               {p.abstract ? <p className="muted" style={{ fontSize: ".84rem" }}>{p.abstract.slice(0, 260)}{p.abstract.length > 260 ? "…" : ""}</p> : null}
-              {isUrl(p.doi_or_url) ? <a href={p.doi_or_url} target="_blank" rel="noopener" style={{ fontSize: ".82rem", overflowWrap: "anywhere" }}>{p.doi_or_url}</a> : null}
+              {linkFor(p.doi_or_url) ? <a href={linkFor(p.doi_or_url)} target="_blank" rel="noopener" style={{ fontSize: ".82rem", overflowWrap: "anywhere" }}>{p.doi_or_url}</a>
+                : p.doi_or_url ? <span className="ms-sub" style={{ overflowWrap: "anywhere" }}>{p.doi_or_url}</span> : null}
             </div>
             {canEdit ? <button className="linkbtn" type="button" onClick={() => run(supabase.from("publications").delete().eq("id", p.id), ["publications"])}>Remove</button> : null}
           </li>

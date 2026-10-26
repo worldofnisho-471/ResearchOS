@@ -64,3 +64,14 @@ export const normOrcid = (s) => {
   const m = String(s || "").toUpperCase().match(/(\d{4})-?(\d{4})-?(\d{4})-?(\d{3}[\dX])/);
   return m ? `${m[1]}-${m[2]}-${m[3]}-${m[4]}` : null;
 };
+
+/** Turns a DOI or link as people type it ("10.1000/x", "doi: 10.1000/x", "doi.org/10.1000/x", a URL) into a clickable URL, or null. */
+export function linkFor(s) {
+  const v = String(s || "").trim();
+  if (!v) return null;
+  const doi = v.match(/^(?:https?:\/\/)?(?:dx\.)?(?:doi\.org\/)?(?:doi:\s*)?(10\.\d{4,9}\/\S+)$/i);
+  if (doi) return "https://doi.org/" + doi[1];
+  if (isUrl(v)) return v;
+  if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v)) return "https://" + v;
+  return null;
+}
