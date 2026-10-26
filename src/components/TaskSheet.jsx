@@ -24,6 +24,8 @@ export default function TaskSheet({ task, focus, onClose }) {
   const [v, setV] = useState(() => t ? { ...t, due_date: t.due_date || "", assignee_id: t.assignee_id || "" }
     : { title: "", milestone: ms[0] || "", method: "", success_criterion: "", est_days: 3, status: "To do", blocker: "", assignee_id: "", due_date: "" });
   const [msg, setMsg] = useState("");
+  const [newMs, setNewMs] = useState(() => !ms.length);
+  const msOptions = v.milestone && !ms.includes(v.milestone) && !newMs ? [...ms, v.milestone] : ms;
   const [comment, setComment] = useState("");
   const box = useRef(null);
 
@@ -44,6 +46,7 @@ export default function TaskSheet({ task, focus, onClose }) {
       est_days: Math.max(1, Math.round(Number(v.est_days) || 1)), status: v.status, blocker: (v.blocker || "").trim(),
       assignee_id: v.assignee_id || null, due_date: v.due_date || null, updated_by: me,
     };
+    if (newMs && !(v.milestone || "").trim()) { setMsg("Name the new milestone, or pick an existing one."); return; }
     if (!data.title || !data.success_criterion) { setMsg("A task needs a title and a success criterion."); return; }
     if (isNew) {
       const pos = Math.max(0, ...d.tasks.map((x) => x.position)) + 1;
@@ -89,8 +92,13 @@ export default function TaskSheet({ task, focus, onClose }) {
           <fieldset disabled={!canEdit} style={{ display: "contents" }}>
             <div className="field wide"><label className="label" htmlFor="e-title">Task</label><input id="e-title" value={v.title} onChange={set("title")} /></div>
             <div className="field"><label className="label" htmlFor="e-ms">Milestone</label>
-              <input id="e-ms" value={v.milestone} onChange={set("milestone")} list="e-ms-list" placeholder="Pick or type a new one" />
-              <datalist id="e-ms-list">{ms.map((m) => <option key={m} value={m} />)}</datalist></div>
+              <select id="e-ms" value={newMs ? "__new" : v.milestone}
+                onChange={(e) => { if (e.target.value === "__new") { setNewMs(true); setV((x) => ({ ...x, milestone: "" })); } else { setNewMs(false); setV((x) => ({ ...x, milestone: e.target.value })); } }}>
+                {msOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                <option value="__new">+ New milestone…</option>
+              </select>
+              {newMs ? <input id="e-ms-new" aria-label="New milestone name" value={v.milestone} onChange={set("milestone")} placeholder="Name the new milestone" autoFocus={ms.length > 0} /> : null}
+            </div>
             <div className="field"><label className="label" htmlFor="e-status">Status</label>
               <select id="e-status" value={v.status} onChange={set("status")}>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></div>
             <div className="field"><label className="label" htmlFor="e-assignee">Owner</label>
