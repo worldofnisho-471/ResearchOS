@@ -461,7 +461,7 @@ Idea: ${p.title}. ${p.idea_text}
 Previous commercial potential: ${a.commercial_potential?.score ?? "?"}/100; previous viability ${p.viability_score}/100.
 Assumptions and evidence:
 ${lines}
-${ec && Number(ec.price) ? `Unit economics entered by the team: price ${ec.price} ${ec.currency} per unit, cost ${ec.cost} per unit, ${ec.units} units per year.` : ""}
+${p.goal === "Product" && ec && Number(ec.price) ? `Unit economics entered by the team: price ${ec.price} ${ec.currency} per unit, cost ${ec.cost} per unit, ${ec.units} units per year.` : ""}
 Raise the score only where evidence confirms an assumption; lower it where evidence rejects one. Keep assumption ids; you may add up to 2 new ones.
 Return JSON: {"commercial_potential":{"score":0-100,"reason":"1-2 sentences mentioning the evidence"},"viability_score":0-100,"assumptions":[${ASSUMPTION_SHAPE}]}`);
   const assessment = { ...a, commercial_potential: { score: clamp(out.commercial_potential?.score), reason: String(out.commercial_potential?.reason ?? "") }, assumptions: Array.isArray(out.assumptions) && out.assumptions.length ? out.assumptions : a.assumptions };

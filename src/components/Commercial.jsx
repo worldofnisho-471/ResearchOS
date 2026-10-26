@@ -127,7 +127,7 @@ export default function Commercial() {
       ) : null}
       {list.length ? <div className="assumes">{list.map((x) => <Assumption key={x.id} x={x} />)}</div>
         : <div className="empty"><p>No assumptions were listed for this assessment. {isLead ? "Re-run the idea check to get them." : ""}</p></div>}
-      <Econ />
+      {d.project.goal === "Product" ? <Econ /> : null}
     </section>
   );
 }
