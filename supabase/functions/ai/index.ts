@@ -41,7 +41,7 @@ let deadline = 0;
 const remaining = () => (deadline ? deadline - Date.now() : 120000);
 async function fetchRetry(call: (signal: AbortSignal) => Promise<Response>, tries = 3): Promise<Response> {
   const once = async () => {
-    const ms = Math.max(5000, Math.min(90000, remaining() - 3000));
+    const ms = Math.max(5000, Math.min(60000, remaining() - 3000));
     try { return await call(AbortSignal.timeout(ms)); }
     catch (e) {
       if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) throw new HttpError(504, "The AI took too long to answer. Try again in a minute.");
@@ -63,6 +63,7 @@ function busyOr(r: Response, who: string, text: string) {
   return new HttpError(502, `${who} error ${r.status}: ${text.slice(0, 300)}`);
 }
 
+let geminiNoThinking = false;
 async function llmText(prompt: string, search = false): Promise<string> {
   const provider = env("LLM_PROVIDER", env("GEMINI_API_KEY") ? "gemini" : "anthropic");
   if (provider === "gemini") {
@@ -71,15 +72,24 @@ async function llmText(prompt: string, search = false): Promise<string> {
     const body: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
     if (search) body.tools = [{ google_search: {} }];
     else body.generationConfig = { responseMimeType: "application/json" };
-    // Optional: GEMINI_THINKING_LEVEL = low makes answers faster (Gemini 3 models).
-    if (env("GEMINI_THINKING_LEVEL")) body.generationConfig = { ...(body.generationConfig as object ?? {}), thinkingConfig: { thinkingLevel: env("GEMINI_THINKING_LEVEL") } };
+    // Think less by default: these are structured tasks, and long thinking is the main cause of slow answers.
+    // GEMINI_THINKING_LEVEL can be low | medium | high | off. If the model rejects the setting, it's dropped.
+    const level = env("GEMINI_THINKING_LEVEL", "low").toLowerCase();
+    const withThinking = () => level !== "off" && !geminiNoThinking
+      ? { ...body, generationConfig: { ...((body.generationConfig as object) ?? {}), thinkingConfig: { thinkingLevel: level } } } : body;
     // Try the main model (with retries), then the optional fallback model.
     const models = [env("GEMINI_MODEL", "gemini-3.8-flash"), env("GEMINI_FALLBACK_MODEL")].filter(Boolean);
     let r: Response | null = null;
     for (const model of models) {
-      r = await fetchRetry((signal) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+      const send = (payload: unknown) => fetchRetry((signal) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal,
       }));
+      r = await send(withThinking());
+      if (r.status === 400 && !geminiNoThinking && level !== "off") {
+        const t = await r.text();
+        if (/thinking/i.test(t)) { geminiNoThinking = true; r = await send(body); }
+        else { r = new Response(t, { status: 400 }); }
+      }
       if (r.ok || !BUSY.has(r.status) || remaining() < 30000) break;
     }
     if (!r!.ok) throw busyOr(r!, "Gemini", await r!.text());
@@ -120,7 +130,8 @@ async function semanticScholar(query: string) {
   if (env("SEMANTIC_SCHOLAR_API_KEY")) headers["x-api-key"] = env("SEMANTIC_SCHOLAR_API_KEY");
   try {
     const u = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=8&fields=title,year,url,abstract`;
-    const r = await fetch(u, { headers });
+    let r = await fetch(u, { headers, signal: AbortSignal.timeout(12000) });
+    if (r.status === 429) { await r.body?.cancel(); await sleep(1500); r = await fetch(u, { headers, signal: AbortSignal.timeout(12000) }); }
     if (!r.ok) return [];
     const d = await r.json();
     return (d.data ?? []).filter((p: any) => p.title).map((p: any) => ({
@@ -222,22 +233,34 @@ async function assess(sb: SupabaseClient, uid: string, b: any) {
   const papers = await semanticScholar(`${idea.title} ${idea.text.split(/\s+/).slice(0, 25).join(" ")}`);
   const list = papers.map((p: any, i: number) => `[${i}] ${p.title} (${p.year ?? "n.d."}): ${p.abstract || "no abstract"}`).join("\n");
   await progress(b, `Assessing the idea against ${papers.length} papers…`);
-  const out = await llmJSON(
-`You are a research advisor assessing a new research idea.
-Idea title: ${idea.title}
+  const ideaBlock = `Idea title: ${idea.title}
 Field: ${idea.field || "not given"}
 Goal: ${idea.goal}
-Idea: ${idea.text}
+Idea: ${idea.text}`;
+  // Two smaller calls at once (the scores, and the commercial assumptions) instead of one long answer.
+  const once = <T,>(f: () => Promise<T>) => f().catch((e) => { if (remaining() > 45000) return f(); throw e; });
+  const [out, extra] = await Promise.all([
+    once(() => llmJSON(
+`You are a research advisor assessing a new research idea.
+${ideaBlock}
 
 Papers found by a search (discuss ONLY these; never cite papers from memory):
 ${list || "(none found)"}
 
 Return JSON:
-{"verdict":"Pursue|Refine|Rethink","viability_score":0-100,"summary":"2 sentences","novelty":{"score":0-100,"reason":"1 sentence"},"feasibility":{"score":0-100,"reason":"1 sentence"},"commercial_potential":{"score":0-100,"reason":"1 sentence"},"challenges":["3-5 items"],"gaps":["2-3 things the papers do not cover"],"paper_notes":[{"index":0,"relevance":"1 sentence"}],"assumptions":[${ASSUMPTION_SHAPE}]}
-"assumptions" lists the 5-7 key assumptions behind commercial_potential, ids a1, a2, ... Label estimates as estimates. Be candid and specific.`);
+{"verdict":"Pursue|Refine|Rethink","viability_score":0-100,"summary":"2 sentences","novelty":{"score":0-100,"reason":"1 sentence"},"feasibility":{"score":0-100,"reason":"1 sentence"},"commercial_potential":{"score":0-100,"reason":"1 sentence"},"challenges":["3-5 items"],"gaps":["2-3 things the papers do not cover"],"paper_notes":[{"index":0,"relevance":"1 sentence"}]}
+Be candid and specific.`)),
+    once(() => llmJSON(
+`You are a research commercialisation advisor.
+${ideaBlock}
+
+List the 5-7 key assumptions that decide this idea's commercial potential (customers, problem, price, market size, competition, channel, regulation).
+Return JSON: {"assumptions":[${ASSUMPTION_SHAPE}]}
+Use ids a1, a2, ... Label estimates as estimates; never present a guessed figure as a fact.`)).catch(() => ({ assumptions: [] })),
+  ]);
   const assessment = {
     summary: String(out.summary ?? ""), novelty: out.novelty, feasibility: out.feasibility, commercial_potential: out.commercial_potential,
-    challenges: out.challenges ?? [], gaps: out.gaps ?? [], assumptions: Array.isArray(out.assumptions) ? out.assumptions.slice(0, 8) : [],
+    challenges: out.challenges ?? [], gaps: out.gaps ?? [], assumptions: Array.isArray(extra.assumptions) ? extra.assumptions.slice(0, 8) : [],
   };
   const verdict = ["Pursue", "Refine", "Rethink"].includes(out.verdict) ? out.verdict : "Refine";
   const score = clamp(out.viability_score);
