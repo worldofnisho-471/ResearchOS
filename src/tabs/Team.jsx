@@ -105,7 +105,6 @@ function Publications() {
   const { d, pid, me, canEdit, run, act, name, reload, profiles } = P;
   const { isBusy, run: runAi, Status } = useBusy();
   const [f, setF] = useState({ title: "", year: "", link: "", abstract: "" });
-  const [bulk, setBulk] = useState("");
   const [result, setResult] = useState("");
   const withOrcid = d.members.filter((m) => profiles[m.user_id]?.orcid).length;
   const myOrcid = profiles[me]?.orcid;
@@ -122,15 +121,6 @@ function Publications() {
     if (await run(supabase.from("publications").insert({ project_id: pid, member_id: me, title: f.title.trim(), year: Number(f.year) || null, doi_or_url: linkFor(f.link) || f.link.trim(), abstract: f.abstract.trim(), source: "manual" }), ["publications"])) {
       act(`added the publication "${f.title.trim()}"`); setF({ title: "", year: "", link: "", abstract: "" });
     }
-  };
-  const addBulk = async (e) => {
-    e.preventDefault();
-    const rows = bulk.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 100).map((line) => {
-      const m = line.match(/^(.*?)[\s,(]*((?:19|20)\d{2})\)?\.?$/);
-      return { project_id: pid, member_id: me, title: (m ? m[1] : line).replace(/[\s,(]+$/, "").trim(), year: m ? Number(m[2]) : null, source: "manual" };
-    }).filter((r) => r.title);
-    if (!rows.length) return;
-    if (await run(supabase.from("publications").insert(rows), ["publications"])) { act(`added ${rows.length} publications`); setBulk(""); }
   };
   const list = d.publications.slice().sort((a, b) => (b.year || 0) - (a.year || 0));
   return (
@@ -168,11 +158,6 @@ function Publications() {
             <div className="field"><label className="label" htmlFor="cp-link">Link (DOI or URL)</label><input id="cp-link" value={f.link} onChange={(e) => setF({ ...f, link: e.target.value })} /></div>
             <div className="field wide"><label className="label" htmlFor="cp-abs">Abstract or 2-line summary</label><textarea id="cp-abs" style={{ minHeight: 70 }} value={f.abstract} onChange={(e) => setF({ ...f, abstract: e.target.value })} /></div>
             <div className="row field wide"><button className="btn small primary" type="submit">Add publication</button></div>
-          </form>
-          <form className="grid" onSubmit={addBulk}>
-            <div className="field wide"><label className="label" htmlFor="cp-bulk">Or paste a list, one title per line (a year at the end is picked up)</label>
-              <textarea id="cp-bulk" style={{ minHeight: 90 }} value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"Low-cost colorimetric sensing of nitrate on paper (2024)\nSmartphone imaging for water quality field tests (2023)"} /></div>
-            <div className="row field wide"><button className="btn small" type="submit">Add all</button></div>
           </form>
         </details>
       ) : null}
